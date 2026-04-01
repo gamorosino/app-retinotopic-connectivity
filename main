@@ -66,6 +66,7 @@ RANGE=$(jq -r '.range // ""' "${CONFIG}")
 FIT_GAUSSIAN=$(jq -r '.fit_gaussian // false' "${CONFIG}")
 FIT_TRUNC_NORM=$(jq -r '.fit_truncated_gaussian_normalized // false' "${CONFIG}")
 MAKE_DVA_SUMMARY=$(jq -r '.make_dva_summary // false' "${CONFIG}")
+AREAS_PER_ECC=$(jq -r '.areas_per_ecc // false' "${CONFIG}")
 
 # Build command
 CMD=(python3 main.py

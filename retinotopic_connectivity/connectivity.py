@@ -371,6 +371,162 @@ def run_all_gaussian_fitting(D, ecc_bins, out_dir: Path, fit_truncated_gaussian_
     plot_mean_deviation_with_sem(diag_obs, diag_fixed, gdir / "mean_deviation_truncated_fixed_mu.png", title="Mean deviation — Truncated Gaussian (μ fixed)")
 
 
+def run_tckedit_endpoints_in_mask(track: Path, mask: Path, out_tck: Path, ends_only: bool = True) -> None:
+    """
+    Filter *track* so that both streamline endpoints lie within *mask*.
+    Equivalent to: tckedit track out_tck -include mask -include mask [-ends_only]
+    """
+    out_tck.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["tckedit", str(track), str(out_tck), "-include", str(mask), "-include", str(mask), "-force"]
+    if ends_only:
+        cmd.append("-ends_only")
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def run_tck2connectome(tck: Path, labels: Path, out_csv: Path, n_nodes: int = 12) -> None:
+    """
+    Run MRtrix tck2connectome to produce a *n_nodes* × *n_nodes* area connectivity CSV.
+    Flags match original VISCONTI script:
+      -symmetric -zero_diagonal -assignment_end_voxels -scale_invnodevol -force
+    """
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "tck2connectome",
+        str(tck),
+        str(labels),
+        str(out_csv),
+        "-symmetric",
+        "-zero_diagonal",
+        "-assignment_end_voxels",
+        "-scale_invnodevol",
+        "-force",
+    ]
+    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+
+
+def make_masked_label_image(varea_img: Path, mask: Path, out_path: Path) -> Path:
+    """
+    Multiply *varea_img* by *mask* to produce a label image restricted to the mask.
+    Preserves affine and header from *varea_img*.
+    """
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    lock = FileLock(str(out_path) + ".lock")
+    with lock:
+        if out_path.exists():
+            return out_path
+        varea_nib = nib.load(str(varea_img))
+        mask_data = np.squeeze(nib.load(str(mask)).get_fdata()) > 0
+        varea_data = np.squeeze(varea_nib.get_fdata())
+        masked = (varea_data * mask_data.astype(varea_data.dtype))
+        out_img = nib.Nifti1Image(masked, varea_nib.affine, varea_nib.header)
+        nib.save(out_img, str(out_path))
+    return out_path
+
+
+def plot_area_matrix(matrix: np.ndarray, title: str, path: Path, labels: List[str], cmap: str = "viridis", vmin: Optional[float] = None, vmax: Optional[float] = None, log_scale: bool = False):
+    """Plot a 12×12 visual-area connectivity matrix."""
+    plt.figure(figsize=(7, 6))
+    mat = matrix.astype(float)
+
+    if log_scale:
+        mat = np.where(mat <= 0, 1e-6, mat)
+        im = plt.imshow(mat, cmap=cmap, norm=LogNorm(vmin=vmin or float(np.nanmin(mat)), vmax=vmax or float(np.nanmax(mat))))
+    else:
+        im = plt.imshow(mat, cmap=cmap, vmin=vmin, vmax=vmax)
+
+    cbar = plt.colorbar(im, label="Connectivity (invnodevol)")
+    format_colorbar(cbar, mat, vmin, vmax, log_scale)
+
+    plt.xticks(range(len(labels)), labels, rotation=45, ha="right")
+    plt.yticks(range(len(labels)), labels)
+    plt.xlabel("Visual area")
+    plt.ylabel("Visual area")
+    plt.title(title + (" (Log Scale)" if log_scale else ""), fontsize=10)
+    plt.tight_layout()
+    save_figure(path, dpi=300)
+    plt.close()
+
+
+def run_areas_per_ecc(
+    tract_tck: Path,
+    ecc_map: Path,
+    polar_map: Optional[Path],
+    varea_map: Path,
+    ecc_bins: List[str],
+    polar_bins: List[str],
+    outdir: Path,
+    ends_only: bool,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+):
+    """
+    Areas-per-eccentricity mode: for each eccentricity bin (and optionally each polar bin),
+    compute a 12×12 visual-area connectivity matrix using MRtrix tck2connectome.
+
+    Outputs are stored under *outdir/areas_per_ecc/*.
+    """
+    n_areas = len(AREA_LABELS)
+    ape_dir = outdir / "areas_per_ecc"
+    ape_dir.mkdir(parents=True, exist_ok=True)
+    roi_dir = ape_dir / "ROIs"
+    roi_dir.mkdir(exist_ok=True)
+    tck_dir = ape_dir / "tcks"
+    tck_dir.mkdir(exist_ok=True)
+
+    for ecc in ecc_bins:
+        for polar in polar_bins:
+            use_polar = polar.lower() != "all"
+
+            # --- combined mask (ecc only or ecc x polar) ---
+            if use_polar:
+                combined_mask = make_subject_patch_mask(ecc_map, polar_map, ecc, polar, roi_dir / "ecc_polar")
+                tag = f"ecc{ecc}_polar{polar}"
+            else:
+                combined_mask = make_subject_patch_mask(ecc_map, None, ecc, None, roi_dir / "ecc")
+                tag = f"ecc{ecc}"
+
+            # --- masked label image (varea restricted to combined mask) ---
+            label_img = make_masked_label_image(varea_map, combined_mask, roi_dir / f"labels_{tag}.nii.gz")
+
+            # --- filter tractogram: both endpoints inside combined mask ---
+            filtered_tck = tck_dir / f"filtered_{tag}.tck"
+            if not filtered_tck.exists():
+                run_tckedit_endpoints_in_mask(tract_tck, combined_mask, filtered_tck, ends_only=ends_only)
+
+            # --- tck2connectome (only if filtered tractogram exists) ---
+            out_csv = ape_dir / f"area_matrix_{tag}.csv"
+            if filtered_tck.exists() and not out_csv.exists():
+                run_tck2connectome(filtered_tck, label_img, out_csv, n_nodes=n_areas)
+
+            # --- load matrix and plot ---
+            try:
+                mat = np.loadtxt(str(out_csv), delimiter=",")
+                if mat.shape != (n_areas, n_areas):
+                    mat = np.zeros((n_areas, n_areas))
+            except Exception:
+                mat = np.zeros((n_areas, n_areas))
+
+            ecc_label = ecc.replace("_", "–")
+            if use_polar:
+                polar_label = polar.replace("_", "–")
+                title = f"Area connectivity  ecc {ecc_label}°  polar {polar_label}°"
+            else:
+                title = f"Area connectivity  ecc {ecc_label}°"
+
+            plot_area_matrix(
+                mat,
+                title,
+                ape_dir / f"area_matrix_{tag}",
+                AREA_LABELS,
+                cmap=color_map,
+                vmin=vmin,
+                vmax=vmax,
+                log_scale=log_scale,
+            )
+
+
 def run_single_subject_matrix(
     tract_tck: Path,
     ecc_map: Path,
@@ -390,8 +546,28 @@ def run_single_subject_matrix(
     fit_gaussian: bool,
     fit_truncated_gaussian_normalized: bool,
     make_dva_summary: bool,
+    areas_per_ecc: bool = False,
 ):
     outdir.mkdir(parents=True, exist_ok=True)
+
+    # --- areas_per_ecc mode: 12×12 area connectivity matrix per eccentricity bin ---
+    if areas_per_ecc:
+        run_areas_per_ecc(
+            tract_tck=tract_tck,
+            ecc_map=ecc_map,
+            polar_map=polar_map,
+            varea_map=varea_map,
+            ecc_bins=ecc_bins,
+            polar_bins=polar_bins,
+            outdir=outdir,
+            ends_only=ends_only,
+            color_map=color_map,
+            log_scale=log_scale,
+            vmin=vmin,
+            vmax=vmax,
+        )
+        return
+
     roi_dir = outdir / "ROIs"
     roi_dir.mkdir(exist_ok=True)
 
