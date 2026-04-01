@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# Brainlife apps generally run from the repo root.
+# Inputs are mounted under ./input and outputs go to ./output.
+mkdir -p output
+
+# Helper to run inside your container+micromamba environment
+run_in_env() {
+  singularity exec -e docker://gamorosino/tract_align:latest \
+    micromamba run -n tract_align "$@"
+}
+
+# Read config.json (Brainlife auto-generates this at runtime)
+CONFIG=${CONFIG:-config.json}
+
+if [[ ! -f "${CONFIG}" ]]; then
+  echo "ERROR: config.json not found at ${CONFIG}"
+  exit 1
+fi
+
+# Parse paths from Brainlife config using jq
+# The structure in your config is nested under _inputs with track, r2, polarAngle, etc.
+# and _inputs[].keys[] tells us which fields are available
+
+# Helper function to safely extract nested values from _inputs
+get_input_file() {
+  local input_id=$1
+  local key=$2
+  jq -r ".[] | select(.id == \"${input_id}\") | .${key} // empty" <(jq '._inputs[]' "${CONFIG}")
+}
+
+# Parse tractogram path
+TCK=$(jq -r '.track // empty' "${CONFIG}")
+if [[ -z "${TCK}" ]]; then
+  echo "ERROR: 'track' field not found in ${CONFIG}"
+  exit 1
+fi
+
+# Parse pRF map paths
+ECC=$(jq -r '.eccentricity // empty' "${CONFIG}")
+POL=$(jq -r '.polarAngle // empty' "${CONFIG}")
+VAREA=$(jq -r '.varea // empty' "${CONFIG}")
+
+# Optional: rfWidth
+RFWIDTH=$(jq -r '.rfWidth // empty' "${CONFIG}" || echo "")
+
+# Validate required files
+for FILE in "${TCK}" "${ECC}" "${POL}" "${VAREA}"; do
+  if [[ ! -f "${FILE}" ]]; then
+    echo "ERROR: Missing required file: ${FILE}"
+    exit 1
+  fi
+done
+
+# Parse Brainlife config parameters
+VISUAL_AREA_A=$(jq -r '.visual_area_a // "V1"' "${CONFIG}")
+VISUAL_AREA_B=$(jq -r '.visual_area_b // "V2"' "${CONFIG}")
+ECC_BINS=$(jq -r '.ecc_bins // "0-2,2-4,4-6,6-8,8-90"' "${CONFIG}")
+POLAR_BINS=$(jq -r '.polar_bins // "all"' "${CONFIG}")
+ENDS_ONLY=$(jq -r '.ends_only // true' "${CONFIG}")
+ROI_ORDER=$(jq -r '.roi_order // false' "${CONFIG}")
+LOG_SCALE=$(jq -r '.log_scale // false' "${CONFIG}")
+COLOR_MAP=$(jq -r '.color_map // "hot"' "${CONFIG}")
+RANGE=$(jq -r '.range // ""' "${CONFIG}")
+FIT_GAUSSIAN=$(jq -r '.fit_gaussian // false' "${CONFIG}")
+FIT_TRUNC_NORM=$(jq -r '.fit_truncated_gaussian_normalized // false' "${CONFIG}")
+MAKE_DVA_SUMMARY=$(jq -r '.make_dva_summary // false' "${CONFIG}")
+
+# Build command
+CMD=(python3 main.py
+  --tck "${TCK}"
+  --ecc "${ECC}"
+  --polar "${POL}"
+  --varea "${VAREA}"
+  --outdir output
+  --config "${CONFIG}"
+)
+
+echo "Running command:"
+printf '  %q' "${CMD[@]}"
+echo
+
+run_in_env "${CMD[@]}"
+
+echo "Done. Outputs in ./output"
