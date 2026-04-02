@@ -42,6 +42,8 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+
+
 def _compute_area_pair_density(task):
     i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order = task
 
@@ -173,39 +175,66 @@ def subject_threshold_map(base_map: Path, low: float, high: float, var_type=None
 def make_subject_patch_mask(
     ecc_map: Path,
     ang_map: Optional[Path],
-    ecc_range: str,
+    ecc_range: Optional[str],
     ang_range: Optional[str],
     out_dir: Path,
 ) -> Path:
     """
-    Create an ROI mask for a subject map:
-      - ecc-only if ang_range is None
-      - ecc x polar if ang_range provided
+    Create an ROI mask for a subject map.
 
-    Output is saved under out_dir.
+    Supported cases:
+      - ecc-only: ecc_range="0_2", ang_range=None
+      - polar-only: ecc_range="all", ang_range="45_90"
+      - ecc x polar: ecc_range="0_2", ang_range="45_90"
+      - full mask: ecc_range="all", ang_range=None
     """
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    if ang_range is None:
-        out = out_dir / f"ecc_{ecc_range}.nii.gz"
-        if out.exists():
-            return out
-        mask, img = subject_threshold_map(ecc_map, *map(float, ecc_range.split("_")))
-        nib.save(nib.Nifti1Image(mask, img.affine, img.header), str(out))
-        return out
+    ecc_is_all = (ecc_range is None) or (str(ecc_range).lower() == "all")
+    ang_is_all = (ang_range is None) or (str(ang_range).lower() == "all")
 
-    out = out_dir / f"ecc_{ecc_range}_polar_{ang_range}.nii.gz"
+    # output name
+    if ecc_is_all and ang_is_all:
+        out = out_dir / "full.nii.gz"
+    elif ecc_is_all:
+        out = out_dir / f"polar_{ang_range}.nii.gz"
+    elif ang_is_all:
+        out = out_dir / f"ecc_{ecc_range}.nii.gz"
+    else:
+        out = out_dir / f"ecc_{ecc_range}_polar_{ang_range}.nii.gz"
+
     if out.exists():
         return out
 
-    ecc_low, ecc_high = map(float, ecc_range.split("_"))
-    ang_low, ang_high = map(float, ang_range.split("_"))
+    ecc_img = nib.load(str(ecc_map))
+    ecc_data = ecc_img.get_fdata()
 
-    ecc_mask, img = subject_threshold_map(ecc_map, ecc_low, ecc_high)
-    ang_mask, _ = subject_threshold_map(ang_map, ang_low, ang_high, var_type="angle")
+    # full mask
+    if ecc_is_all and ang_is_all:
+        roi = np.ones_like(np.squeeze(ecc_data), dtype=np.uint8)
+        nib.save(nib.Nifti1Image(roi, ecc_img.affine, ecc_img.header), str(out))
+        return out
 
-    roi = ((ecc_mask > 0) & (ang_mask > 0)).astype(np.uint8)
-    nib.save(nib.Nifti1Image(roi, img.affine, img.header), str(out))
+    # ecc mask
+    if ecc_is_all:
+        ecc_mask = np.ones_like(np.squeeze(ecc_data), dtype=bool)
+    else:
+        ecc_low, ecc_high = map(float, str(ecc_range).split("_"))
+        ecc_mask, _ = subject_threshold_map(ecc_map, ecc_low, ecc_high)
+        ecc_mask = ecc_mask > 0
+
+    # polar mask
+    if ang_is_all:
+        ang_mask = np.ones_like(np.squeeze(ecc_data), dtype=bool)
+    else:
+        if ang_map is None:
+            raise ValueError("ang_map is required when ang_range is not None/'all'")
+        ang_low, ang_high = map(float, str(ang_range).split("_"))
+        ang_mask, _ = subject_threshold_map(ang_map, ang_low, ang_high, var_type="angle")
+        ang_mask = ang_mask > 0
+
+    roi = (ecc_mask & ang_mask).astype(np.uint8)
+    nib.save(nib.Nifti1Image(roi, ecc_img.affine, ecc_img.header), str(out))
     return out
 
 
@@ -936,7 +965,7 @@ def run_single_subject_matrix(
             )
         else:
             raise ValueError(
-                f"Unknown areas_global_method '{areas_global_method}'. "
+                f"Unknown area_matrix_method '{area_matrix_method}'. "
                 f"Valid options are: 'connectome', 'pairwise'."
             )
         return
