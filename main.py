@@ -62,7 +62,14 @@ def main():
 
     if areas_per_ecc:
         if color_map == '':
-            color_map="#2ca02c,#006400,#0082b0,#0044b0"
+            import matplotlib.pyplot as plt
+            import matplotlib.colors as mcolors
+    
+            n = len(ecc_bins)
+            cmap = plt.get_cmap("viridis")  # or any default you prefer
+    
+            colors = [mcolors.to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
+            color_map = ",".join(colors)
     
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
