@@ -7,6 +7,7 @@ from retinotopic_connectivity.connectivity import run_single_subject_matrix
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex
 
+
 def _get(cfg, key, default=None):
     if cfg is None:
         return default
@@ -14,7 +15,9 @@ def _get(cfg, key, default=None):
 
 
 def main():
-    p = argparse.ArgumentParser(description="Compute single-subject retinotopic connectivity matrix (Brainlife app).")
+    p = argparse.ArgumentParser(
+        description="Compute single-subject retinotopic connectivity matrix (Brainlife app)."
+    )
     p.add_argument("--tck", required=True, type=str, help="Input tractogram (.tck)")
     p.add_argument("--ecc", required=True, type=str, help="eccentricity.nii.gz")
     p.add_argument("--polar", required=True, type=str, help="polarAngle.nii.gz")
@@ -33,7 +36,7 @@ def main():
     ecc_bins_str = _get(cfg, "ecc_bins", "0-2,2-4,4-6,6-8,8-90")
     polar_bins_str = _get(cfg, "polar_bins", "all")
 
-    # normalize to underscore format used by your scripts
+    # normalize to underscore format used internally
     ecc_bins = [b.strip().replace("-", "_") for b in ecc_bins_str.split(",") if b.strip()]
     polar_bins = [b.strip().replace("-", "_") for b in polar_bins_str.split(",") if b.strip()]
     if len(polar_bins) == 0:
@@ -56,21 +59,30 @@ def main():
     fit_gaussian = bool(_get(cfg, "fit_gaussian", False))
     fit_trunc_norm = bool(_get(cfg, "fit_truncated_gaussian_normalized", False))
     make_dva_summary = bool(_get(cfg, "make_dva_summary", False))
+
+    # renamed from areas_per_ecc -> areas_per_bin
     areas_per_bin = bool(_get(cfg, "areas_per_bin", False))
+
+    # new: choose backend for area-per-bin mode
+    area_matrix_method = str(_get(cfg, "area_matrix_method", "connectome")).strip().lower()
+    if area_matrix_method not in {"connectome", "pairwise"}:
+        raise ValueError(
+            f"Invalid area_matrix_method '{area_matrix_method}'. "
+            f"Valid options are: 'connectome', 'pairwise'."
+        )
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    if color_map == '':
+    if color_map == "":
         if areas_per_bin:
-  
             n = len(ecc_bins)
-            cmap = plt.get_cmap("viridis")  
+            cmap = plt.get_cmap("viridis")
             colors = [to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
             color_map = ",".join(colors)
         else:
-            color_map = 'hot'
-    
+            color_map = "hot"
+
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
         ecc_map=Path(args.ecc),
@@ -91,6 +103,7 @@ def main():
         fit_truncated_gaussian_normalized=fit_trunc_norm,
         make_dva_summary=make_dva_summary,
         areas_per_bin=areas_per_bin,
+        area_matrix_method=area_matrix_method,
     )
 
 
