@@ -410,13 +410,21 @@ def run_tckedit_endpoints_in_mask(track: Path, mask: Path, out_tck: Path, ends_o
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
 
-def run_tck2connectome(tck: Path, labels: Path, out_csv: Path, n_nodes: int = 12) -> None:
+def run_tck2connectome(
+    tck: Path,
+    labels: Path,
+    out_csv: Path,
+    n_nodes: int = 12,
+    n_threads: int = 0,
+) -> None:
     """
-    Run MRtrix tck2connectome to produce a *n_nodes* × *n_nodes* area connectivity CSV.
-    Flags match original VISCONTI script:
+    Run MRtrix tck2connectome to produce a n_nodes × n_nodes area connectivity CSV.
+    Flags:
       -symmetric -zero_diagonal -assignment_end_voxels -scale_invnodevol -force
+      -nthreads N
     """
     out_csv.parent.mkdir(parents=True, exist_ok=True)
+
     cmd = [
         "tck2connectome",
         str(tck),
@@ -427,6 +435,8 @@ def run_tck2connectome(tck: Path, labels: Path, out_csv: Path, n_nodes: int = 12
         "-assignment_end_voxels",
         "-scale_invnodevol",
         "-force",
+        "-nthreads",
+        str(n_threads),
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
@@ -517,6 +527,7 @@ def run_areas_per_bin_connectome(
     log_scale: bool,
     vmin: Optional[float],
     vmax: Optional[float],
+    n_jobs: int = 1,
 ):
     """
     Areas-per-eccentricity mode using MRtrix tck2connectome.
@@ -577,7 +588,7 @@ def run_areas_per_bin_connectome(
             # --- tck2connectome ---
             out_csv = ape_dir / f"area_matrix_{tag}.csv"
             if filtered_tck.exists() and not out_csv.exists():
-                run_tck2connectome(filtered_tck, label_img, out_csv, n_nodes=n_areas)
+                run_tck2connectome(filtered_tck, label_img, out_csv, n_nodes=n_areas,n_threads=n_jobs)
 
             # --- load matrix and plot ---
             try:
@@ -741,6 +752,132 @@ def run_areas_per_bin_pairwise(
                 log_scale=log_scale,
             )
 
+def run_areas_connectome(
+    tract_tck: Path,
+    varea_map: Path,
+    outdir: Path,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+    n_jobs: int = 1,
+):
+    """
+    Compute a single 12x12 visual-area connectivity matrix over the full tractogram
+    using MRtrix tck2connectome on the full varea label image.
+    """
+    n_jobs = max(1, int(n_jobs))
+    n_areas = len(AREA_LABELS)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    out_csv = outdir / "area_matrix.csv"
+    if not out_csv.exists():
+        run_tck2connectome(
+            tract_tck,
+            varea_map,
+            out_csv,
+            n_nodes=n_areas,
+            n_threads=n_jobs,
+        )
+
+    try:
+        M = np.loadtxt(str(out_csv), delimiter=",")
+        if M.shape != (n_areas, n_areas):
+            M = np.zeros((n_areas, n_areas))
+    except Exception:
+        M = np.zeros((n_areas, n_areas))
+
+    plot_area_matrix(
+        M,
+        "Visual area connectivity",
+        outdir / "area_matrix",
+        AREA_LABELS,
+        cmap=color_map,
+        vmin=vmin,
+        vmax=vmax,
+        log_scale=log_scale,
+    )
+def run_areas_pairwise(
+    tract_tck: Path,
+    varea_map: Path,
+    outdir: Path,
+    ends_only: bool,
+    roi_order: bool,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+    zero_diagonal: bool = True,
+    symmetric: bool = True,
+    n_jobs: int = 1,
+):
+    """
+    Compute a single 12x12 visual-area connectivity matrix over the full tractogram
+    using explicit pairwise ROI counting via run_tckedit().
+    """
+    n_jobs = max(1, int(n_jobs))
+    n_areas = len(AREA_LABELS)
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    roi_dir = outdir / "ROIs"
+    roi_dir.mkdir(exist_ok=True)
+
+    tck_dir = outdir / "tcks"
+    tck_dir.mkdir(exist_ok=True)
+
+    area_masks = {
+        area: extract_visual_area_mask(varea_map, area, roi_dir / f"{area}.nii.gz")
+        for area in AREA_LABELS
+    }
+
+    M = np.zeros((n_areas, n_areas), dtype=float)
+
+    if zero_diagonal:
+        np.fill_diagonal(M, 0.0)
+
+    tasks = []
+    area_rois_list = [area_masks[a] for a in AREA_LABELS]
+
+    for i in range(n_areas):
+        for j in range(i, n_areas):
+            if zero_diagonal and i == j:
+                continue
+
+            roi1 = area_rois_list[i]
+            roi2 = area_rois_list[j]
+
+            tck_out = tck_dir / f"{AREA_LABELS[i]}_{AREA_LABELS[j]}.tck"
+
+            tasks.append(
+                (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
+            )
+
+    if n_jobs == 1:
+        results = [_compute_area_pair_density(task) for task in tasks]
+    else:
+        chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
+        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+            results = list(ex.map(_compute_area_pair_density, tasks, chunksize=chunksize))
+
+    for i, j, density in results:
+        M[i, j] = density
+        if symmetric:
+            M[j, i] = density
+
+    out_csv = outdir / "area_matrix.csv"
+    np.savetxt(out_csv, M, delimiter=",", fmt="%.6f")
+
+    plot_area_matrix(
+        M,
+        "Visual area connectivity",
+        outdir / "area_matrix",
+        AREA_LABELS,
+        cmap=color_map,
+        vmin=vmin,
+        vmax=vmax,
+        log_scale=log_scale,
+    )
+
 
 def run_single_subject_matrix(
     tract_tck: Path,
@@ -763,10 +900,47 @@ def run_single_subject_matrix(
     make_dva_summary: bool,
     areas_per_bin: bool = False,
     area_matrix_method: str = "connectome",
+    areas_global: bool = False,
+    areas_global_method: str = "connectome",
     n_jobs: int = 1,
 ):
     outdir.mkdir(parents=True, exist_ok=True)
 
+
+     # --- global visual-area mode ---
+    if areas_global:
+        if areas_global_method == "connectome":
+            run_areas_connectome(
+                tract_tck=tract_tck,
+                varea_map=varea_map,
+                outdir=outdir / "areas_connectome",
+                color_map=color_map,
+                log_scale=log_scale,
+                vmin=vmin,
+                vmax=vmax,
+                n_jobs=n_jobs,
+            )
+        elif areas_global_method == "pairwise":
+            run_areas_pairwise(
+                tract_tck=tract_tck,
+                varea_map=varea_map,
+                outdir=outdir / "areas_pairwise",
+                ends_only=ends_only,
+                roi_order=roi_order,
+                color_map=color_map,
+                log_scale=log_scale,
+                vmin=vmin,
+                vmax=vmax,
+                zero_diagonal=True,
+                symmetric=True,
+                n_jobs=n_jobs,
+            )
+        else:
+            raise ValueError(
+                f"Unknown areas_global_method '{areas_global_method}'. "
+                f"Valid options are: 'connectome', 'pairwise'."
+            )
+        return
     # --- areas_per_bin mode ---
     if areas_per_bin:
         if area_matrix_method == "connectome":
@@ -783,6 +957,7 @@ def run_single_subject_matrix(
                 log_scale=log_scale,
                 vmin=vmin,
                 vmax=vmax,
+                n_jobs=n_jobs,
             )
         elif area_matrix_method == "pairwise":
             run_areas_per_bin_pairwise(
