@@ -3,11 +3,56 @@ import argparse
 import json
 from pathlib import Path
 
-from retinotopic_connectivity.connectivity import run_single_subject_matrix
+from retinotopic_connectivity.connectivity import (
+    run_single_subject_matrix,
+    make_smooth_colormap,
+)
 import matplotlib.pyplot as plt
-from matplotlib.colors import to_hex
+from matplotlib.colors import to_hex, to_rgb
+
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex, to_rgb
 
 
+def resolve_area_bin_colors(color_map: str, n_bins: int) -> str:
+    color_map = (color_map or "").strip()
+
+    # explicit list of colors
+    if "," in color_map:
+        colors = [c.strip() for c in color_map.split(",") if c.strip()]
+        if len(colors) != n_bins:
+            raise ValueError(
+                f"Expected {n_bins} colors for areas_per_bin, got {len(colors)} "
+                f"in color_map='{color_map}'."
+            )
+        for c in colors:
+            try:
+                to_rgb(c)
+            except ValueError:
+                raise ValueError(f"Invalid color '{c}' in color_map list.")
+        return ",".join(colors)
+
+    # default colormap
+    if color_map == "":
+        cmap = plt.get_cmap("viridis")
+    else:
+        # first try as matplotlib colormap name
+        try:
+            cmap = plt.get_cmap(color_map)
+        except ValueError:
+            # otherwise try as a single color
+            try:
+                to_rgb(color_map)
+                cmap = make_smooth_colormap(color_map, name=f"custom_{color_map}")
+            except ValueError:
+                raise ValueError(
+                    f"'{color_map}' is neither a valid matplotlib colormap name "
+                    f"nor a valid color."
+                )
+
+    colors = [to_hex(cmap(i / max(n_bins - 1, 1))) for i in range(n_bins)]
+    return ",".join(colors)
+    
 def _get(cfg, key, default=None):
     if cfg is None:
         return default
@@ -74,14 +119,11 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    if color_map == "":
-        if areas_per_bin:
-            n = len(ecc_bins)
-            cmap = plt.get_cmap("viridis")
-            colors = [to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
-            color_map = ",".join(colors)
-        else:
-            color_map = "hot"
+    if areas_per_bin:
+        color_map = resolve_area_bin_colors(color_map, len(ecc_bins))
+    else:
+        if color_map == "":
+        color_map = "hot"
 
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
