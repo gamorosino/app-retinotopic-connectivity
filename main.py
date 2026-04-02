@@ -101,6 +101,12 @@ def main():
     if len(polar_bins) == 0:
         polar_bins = ["all"]
 
+    # detect global mode (no binning)
+    is_global_mode = (
+        len(ecc_bins) == 1 and ecc_bins[0].lower() == "all"
+        and len(polar_bins) == 1 and polar_bins[0].lower() == "all"
+    )
+    
     ends_only = bool(_get(cfg, "ends_only", True))
     roi_order = bool(_get(cfg, "roi_order", False))
 
@@ -162,7 +168,8 @@ def main():
         make_dva_summary=make_dva_summary,
         areas_per_bin=areas_per_bin,
         area_matrix_method=area_matrix_method,
-        n_jobs=n_jobs
+        n_jobs=n_jobs,
+        areas_global=is_global_mode
     )
 
 
