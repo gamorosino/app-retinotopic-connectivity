@@ -42,6 +42,57 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+
+def _compute_ecc_matrix_cell_precomputed(task):
+    (
+        i, j, e1, e2,
+        roiA_cache, roiB_cache,
+        areaA_cache, areaB_cache,
+        tract_tck, polar_bins, outdir,
+        visual_area_a, visual_area_b,
+        ends_only, roi_order,
+    ) = task
+
+    total_density = 0.0
+
+    for polar in polar_bins:
+        polar_tag = "all" if polar.lower() == "all" else polar
+
+        roi1 = roiA_cache[(e1, polar_tag)]
+        roi2 = roiB_cache[(e2, polar_tag)]
+
+        a1 = areaA_cache[(e1, polar_tag)]
+        a2 = areaB_cache[(e2, polar_tag)]
+
+        if a1 == 0 or a2 == 0:
+            continue
+
+        tck_out = outdir / "tcks" / f"{visual_area_a}_{visual_area_b}_{e1}_{e2}_polar{polar_tag}.tck"
+
+        if not tck_out.exists():
+            count = run_tckedit(
+                tract_tck,
+                roi1,
+                roi2,
+                tck_out,
+                ends_only=ends_only,
+                roi_order=roi_order,
+            )
+        else:
+            try:
+                count = int(
+                    subprocess.check_output(["tckinfo", str(tck_out), "-count"])
+                    .decode()
+                    .split()[-1]
+                )
+            except Exception:
+                count = 0
+
+        area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
+        density = (count / area) if area > 0 else 0.0
+        total_density += density
+
+    return i, j, total_density
 def _compute_area_pair_density(task):
     i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order = task
 
@@ -188,25 +239,28 @@ def make_subject_patch_mask(
 
     if ang_range is None:
         out = out_dir / f"ecc_{ecc_range}.nii.gz"
+    else:
+        out = out_dir / f"ecc_{ecc_range}_polar_{ang_range}.nii.gz"
+
+    lock = FileLock(str(out) + ".lock")
+    with lock:
         if out.exists():
             return out
-        mask, img = subject_threshold_map(ecc_map, *map(float, ecc_range.split("_")))
-        nib.save(nib.Nifti1Image(mask, img.affine, img.header), str(out))
+
+        if ang_range is None:
+            mask, img = subject_threshold_map(ecc_map, *map(float, ecc_range.split("_")))
+            nib.save(nib.Nifti1Image(mask, img.affine, img.header), str(out))
+            return out
+
+        ecc_low, ecc_high = map(float, ecc_range.split("_"))
+        ang_low, ang_high = map(float, ang_range.split("_"))
+
+        ecc_mask, img = subject_threshold_map(ecc_map, ecc_low, ecc_high)
+        ang_mask, _ = subject_threshold_map(ang_map, ang_low, ang_high, var_type="angle")
+
+        roi = ((ecc_mask > 0) & (ang_mask > 0)).astype(np.uint8)
+        nib.save(nib.Nifti1Image(roi, img.affine, img.header), str(out))
         return out
-
-    out = out_dir / f"ecc_{ecc_range}_polar_{ang_range}.nii.gz"
-    if out.exists():
-        return out
-
-    ecc_low, ecc_high = map(float, ecc_range.split("_"))
-    ang_low, ang_high = map(float, ang_range.split("_"))
-
-    ecc_mask, img = subject_threshold_map(ecc_map, ecc_low, ecc_high)
-    ang_mask, _ = subject_threshold_map(ang_map, ang_low, ang_high, var_type="angle")
-
-    roi = ((ecc_mask > 0) & (ang_mask > 0)).astype(np.uint8)
-    nib.save(nib.Nifti1Image(roi, img.affine, img.header), str(out))
-    return out
 
 
 def extract_visual_area_mask(varea_img: Path, area_name: str, out_path: Path) -> Path:
@@ -799,7 +853,7 @@ def run_single_subject_matrix(
                 log_scale=log_scale,
                 vmin=vmin,
                 vmax=vmax,
-                n_jobs=n_jobs 
+                n_jobs=n_jobs,
             )
         else:
             raise ValueError(
@@ -816,40 +870,68 @@ def run_single_subject_matrix(
     areaB_mask = extract_visual_area_mask(varea_map, visual_area_b, roi_dir / f"{visual_area_b}.nii.gz")
 
     M = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+    tck_dir = outdir / "tcks"
+    tck_dir.mkdir(exist_ok=True)
+    
+    inter_dir = roi_dir / "intersections"
+    inter_dir.mkdir(exist_ok=True)
+    
+    roiA_cache = {}
+    roiB_cache = {}
+    
+    for e in ecc_bins:
+        for polar in polar_bins:
+            if polar.lower() == "all":
+                roi_tmp = make_subject_patch_mask(ecc_map, None, e, None, roi_dir / "ecc")
+                polar_tag = "all"
+            else:
+                roi_tmp = make_subject_patch_mask(ecc_map, polar_map, e, polar, roi_dir / "ecc_polar")
+                polar_tag = polar
+    
+            roiA = intersect_masks(
+                roi_tmp,
+                areaA_mask,
+                inter_dir / f"{visual_area_a}_ecc{e}_polar{polar_tag}.nii.gz"
+            )
+    
+            roiB = intersect_masks(
+                roi_tmp,
+                areaB_mask,
+                inter_dir / f"{visual_area_b}_ecc{e}_polar{polar_tag}.nii.gz"
+            )
+    
+            roiA_cache[(e, polar_tag)] = roiA
+            roiB_cache[(e, polar_tag)] = roiB
+    areaA_cache = {}
+    areaB_cache = {}
+    
+    for key, roi in roiA_cache.items():
+        areaA_cache[key] = mask_area(roi, roi)
+    
+    for key, roi in roiB_cache.items():
+        areaB_cache[key] = mask_area(roi, roi)
 
+    tasks = []
     for i, e1 in enumerate(ecc_bins):
         for j, e2 in enumerate(ecc_bins):
-            total_density = 0.0
+            tasks.append((
+                i, j, e1, e2,
+                roiA_cache, roiB_cache,
+                areaA_cache, areaB_cache,
+                tract_tck, polar_bins, outdir,
+                visual_area_a, visual_area_b,
+                ends_only, roi_order,
+            ))
 
-            for polar in polar_bins:
-                if polar.lower() == "all":
-                    roi1_tmp = make_subject_patch_mask(ecc_map, None, e1, None, roi_dir / "ecc")
-                    roi2_tmp = make_subject_patch_mask(ecc_map, None, e2, None, roi_dir / "ecc")
-                    polar_tag = "all"
-                else:
-                    roi1_tmp = make_subject_patch_mask(ecc_map, polar_map, e1, polar, roi_dir / "ecc_polar")
-                    roi2_tmp = make_subject_patch_mask(ecc_map, polar_map, e2, polar, roi_dir / "ecc_polar")
-                    polar_tag = polar
-
-                roi1 = intersect_masks(roi1_tmp, areaA_mask, roi_dir / "intersections" / f"{visual_area_a}_ecc{e1}_polar{polar_tag}.nii.gz")
-                roi2 = intersect_masks(roi2_tmp, areaB_mask, roi_dir / "intersections" / f"{visual_area_b}_ecc{e2}_polar{polar_tag}.nii.gz")
-
-                tck_out = outdir / "tcks" / f"{visual_area_a}_{visual_area_b}_{e1}_{e2}_polar{polar_tag}.tck"
-                if not tck_out.exists():
-                    count = run_tckedit(tract_tck, roi1, roi2, tck_out, ends_only=ends_only, roi_order=roi_order)
-                else:
-                    try:
-                        count = int(subprocess.check_output(["tckinfo", str(tck_out), "-count"]).decode().split()[-1])
-                    except Exception:
-                        count = 0
-
-                a1 = mask_area(roi1, roi1)
-                a2 = mask_area(roi2, roi2)
-                area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
-                density = (count / area) if area > 0 else 0.0
-                total_density += density
-
-            M[i, j] = total_density
+    if n_jobs == 1:
+        results = [_compute_ecc_matrix_cell_precomputed(task) for task in tasks]
+    else:
+        chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
+        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+            results = list(ex.map(_compute_ecc_matrix_cell_precomputed, tasks, chunksize=chunksize))
+            
+    for i, j, total_density in results:
+        M[i, j] = total_density
 
     np.savetxt(outdir / "matrix.csv", M, delimiter=",", fmt="%.6f")
     plot_matrix(
