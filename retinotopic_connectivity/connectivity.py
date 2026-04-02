@@ -33,12 +33,8 @@ from fit_gaussian_connectivity import (
     plot_mean_deviation_with_sem,
 )
 from diagonal_to_braplot import compute_shell_vals, plot_radial_shells
-
-# NOTE: diagonal_to_braplot.plot_dva_bar has a show() version in that file.
-# Your big script redefined plot_dva_bar with save-to-file behavior.
-# We provide a save-to-file implementation here for the app.
 from matplotlib import cm, colors as mpl_colors
-
+from matrix_to_dva import plot_dva_bar
 
 # ---------------------------------------------------------------------
 # Visual area labels (Benson-style)
@@ -660,10 +656,17 @@ def run_single_subject_matrix(
     )
 
     if make_dva_summary:
-        dva_dir = outdir / "dva_summary"
+        dva_dir outdir = #outdir / "dva_summary"
         dva_dir.mkdir(exist_ok=True)
         shell_vals = compute_shell_vals(M)
-        plot_dva_bar_save(shell_vals, dva_dir / "dva_shell_barplot.png", bar_x_dim=95, base_width=4)
+        plot_dva_bar(
+        shell_vals,
+        out_png=out_png,
+        bar_x_dim=95,
+        base_width=4
+        y_lim=None,
+        y_decimals=4
+            )
         plot_radial_shells(M, out_png=dva_dir / "dva_radial_shells.png")
 
     if fit_gaussian:
