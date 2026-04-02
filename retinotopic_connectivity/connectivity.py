@@ -589,6 +589,8 @@ def run_areas_per_bin_pairwise(
     log_scale: bool,
     vmin: Optional[float],
     vmax: Optional[float],
+    zero_diagonal: bool = True,
+    symmetric = True,
 ):
     """
     Areas-per-eccentricity mode using explicit pairwise ROI counting via run_tckedit().
@@ -658,6 +660,14 @@ def run_areas_per_bin_pairwise(
 
             for i, area_i in enumerate(AREA_LABELS):
                 for j, area_j in enumerate(AREA_LABELS):
+                        
+                    if zero_diagonal and i == j:
+                        M[i, j] = 0.0
+                        continue
+                    if j < i:
+                        if symmetric:
+                            M[i, j] = M[j, i]
+                        continue    
                     roi1 = area_bin_rois[area_i]
                     roi2 = area_bin_rois[area_j]
 
@@ -687,7 +697,8 @@ def run_areas_per_bin_pairwise(
                     area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
                     density = (count / area) if area > 0 else 0.0
                     M[i, j] = density
-
+                    if symmetric:
+                        M[j, i] = density
             out_csv = ape_dir / f"area_matrix_{tag}.csv"
             np.savetxt(out_csv, M, delimiter=",", fmt="%.6f")
 
