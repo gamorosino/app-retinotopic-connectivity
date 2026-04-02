@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 from retinotopic_connectivity.connectivity import run_single_subject_matrix
-
+import matplotlib.colors as mcolors
 
 def _get(cfg, key, default=None):
     if cfg is None:
