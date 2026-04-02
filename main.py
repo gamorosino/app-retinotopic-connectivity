@@ -10,9 +10,6 @@ from retinotopic_connectivity.connectivity import (
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex, to_rgb
 
-import matplotlib.pyplot as plt
-from matplotlib.colors import to_hex, to_rgb
-
 
 def resolve_area_bin_colors(color_map: str, n_bins: int) -> str:
     color_map = (color_map or "").strip()
@@ -123,7 +120,7 @@ def main():
         color_map = resolve_area_bin_colors(color_map, len(ecc_bins))
     else:
         if color_map == "":
-        color_map = "hot"
+            color_map = "hot"
 
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
