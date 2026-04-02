@@ -690,27 +690,31 @@ def run_areas_per_bin_pairwise(
 
             if zero_diagonal:
                 np.fill_diagonal(M, 0.0)
-
+############
             tasks = []
-            for i, area_i in enumerate(AREA_LABELS):
+            area_rois_list = [area_bin_rois[a] for a in AREA_LABELS]
+            
+            for i in range(n_areas):
                 for j in range(i, n_areas):
                     if zero_diagonal and i == j:
                         continue
-
-                    roi1 = area_bin_rois[area_i]
-                    roi2 = area_bin_rois[AREA_LABELS[j]]
-                    tck_out = tck_dir / f"{area_i}_{AREA_LABELS[j]}_{tag}.tck"
-
+            
+                    roi1 = area_rois_list[i]
+                    roi2 = area_rois_list[j]
+            
+                    tck_out = tck_dir / f"{AREA_LABELS[i]}_{AREA_LABELS[j]}_{tag}.tck"
+            
                     tasks.append(
                         (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
                     )
-
+            
             if n_jobs == 1:
                 results = [_compute_area_pair_density(task) for task in tasks]
             else:
+                chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
                 with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-                    results = list(ex.map(_compute_area_pair_density, tasks))
-
+                    results = list(ex.map(_compute_area_pair_density, tasks, chunksize=chunksize))
+            
             for i, j, density in results:
                 M[i, j] = density
                 if symmetric:
@@ -795,6 +799,7 @@ def run_single_subject_matrix(
                 log_scale=log_scale,
                 vmin=vmin,
                 vmax=vmax,
+                n_jobs=n_jobs 
             )
         else:
             raise ValueError(
