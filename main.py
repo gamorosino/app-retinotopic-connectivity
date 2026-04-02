@@ -5,7 +5,7 @@ from pathlib import Path
 
 from retinotopic_connectivity.connectivity import run_single_subject_matrix
 import matplotlib.pyplot as plt
-import matplotlib.colors as mcolors
+from matplotlib.colors import to_hex
 
 def _get(cfg, key, default=None):
     if cfg is None:
@@ -66,7 +66,7 @@ def main():
   
             n = len(ecc_bins)
             cmap = plt.get_cmap("viridis")  
-            colors = [mcolors.to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
+            colors = [to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
             color_map = ",".join(colors)
         else:
             color_map = 'hot'
