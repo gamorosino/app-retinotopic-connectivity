@@ -9,6 +9,23 @@ from retinotopic_connectivity.connectivity import (
 )
 import matplotlib.pyplot as plt
 from matplotlib.colors import to_hex, to_rgb
+import os
+
+def resolve_n_jobs(n_jobs: int) -> int:
+    """
+    Resolve number of workers.
+
+    Rules
+    -----
+    n_jobs = -1  -> use all available CPUs
+    n_jobs >= 1  -> use that exact number
+    otherwise    -> raise ValueError
+    """
+    if n_jobs == -1:
+        return max(1, os.cpu_count() or 1)
+    if n_jobs >= 1:
+        return n_jobs
+    raise ValueError("n_jobs must be -1 or >= 1")
 
 
 def resolve_area_bin_colors(color_map: str, n_bins: int) -> str:
@@ -121,7 +138,9 @@ def main():
     else:
         if color_map == "":
             color_map = "hot"
-
+            
+    n_jobs = int(_get(cfg, "n_jobs", 1))
+    n_jobs = resolve_n_jobs(int(n_jobs))
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
         ecc_map=Path(args.ecc),
