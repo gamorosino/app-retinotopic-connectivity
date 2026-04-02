@@ -47,20 +47,38 @@ def plot_dva_bar(
     Bar plot of discrete DVA-distance connectivity with SEM error bars.
     """
 
-    labels = [
-        "same DVA", "±1 DVA", "±2 DVA", "±3 DVA",
-        "±4 DVA", "±5 DVA", "≥6 DVA"
-    ]
-
     # --------------------------------------------------------
     # Compute means + SEMs
     # --------------------------------------------------------
-    means = [shell_vals[k].mean() for k in range(6)]
-    sems  = [shell_vals[k].std() / np.sqrt(len(shell_vals[k])) for k in range(6)]
-
-    far_vals = np.concatenate([v for k, v in shell_vals.items() if k >= 6])
-    means.append(far_vals.mean())
-    sems.append(far_vals.std() / np.sqrt(len(far_vals)))
+    max_k = max(shell_vals.keys())
+    
+    means = []
+    sems = []
+    labels = []
+    
+    # up to k=5 OR max available
+    k_limit = min(5, max_k)
+    
+    for k in range(k_limit + 1):
+        vals = shell_vals.get(k, np.array([]))
+        if len(vals) == 0:
+            continue
+    
+        means.append(vals.mean())
+        sems.append(vals.std() / np.sqrt(len(vals)))
+    
+        if k == 0:
+            labels.append("same DVA")
+        else:
+            labels.append(f"±{k} DVA")
+    
+    # handle far shells only if they exist
+    if max_k > 5:
+        far_vals = np.concatenate([v for k, v in shell_vals.items() if k > 5 and len(v) > 0])
+        if len(far_vals) > 0:
+            means.append(far_vals.mean())
+            sems.append(far_vals.std() / np.sqrt(len(far_vals)))
+            labels.append("≥6 DVA")
 
     # --------------------------------------------------------
     # Shrink control
