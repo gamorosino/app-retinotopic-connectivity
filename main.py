@@ -56,13 +56,13 @@ def main():
     fit_gaussian = bool(_get(cfg, "fit_gaussian", False))
     fit_trunc_norm = bool(_get(cfg, "fit_truncated_gaussian_normalized", False))
     make_dva_summary = bool(_get(cfg, "make_dva_summary", False))
-    areas_per_ecc = bool(_get(cfg, "areas_per_ecc", False))
+    areas_per_bin = bool(_get(cfg, "areas_per_bin", False))
 
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
     if color_map == '':
-        if areas_per_ecc:
+        if areas_per_bin:
   
             n = len(ecc_bins)
             cmap = plt.get_cmap("viridis")  
@@ -90,7 +90,7 @@ def main():
         fit_gaussian=fit_gaussian,
         fit_truncated_gaussian_normalized=fit_trunc_norm,
         make_dva_summary=make_dva_summary,
-        areas_per_ecc=areas_per_ecc,
+        areas_per_bin=areas_per_bin,
     )
 
 
