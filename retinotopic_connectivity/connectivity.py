@@ -901,7 +901,6 @@ def run_single_subject_matrix(
     areas_per_bin: bool = False,
     area_matrix_method: str = "connectome",
     areas_global: bool = False,
-    areas_global_method: str = "connectome",
     n_jobs: int = 1,
 ):
     outdir.mkdir(parents=True, exist_ok=True)
@@ -909,7 +908,7 @@ def run_single_subject_matrix(
 
      # --- global visual-area mode ---
     if areas_global:
-        if areas_global_method == "connectome":
+        if area_matrix_method == "connectome":
             run_areas_connectome(
                 tract_tck=tract_tck,
                 varea_map=varea_map,
@@ -920,7 +919,7 @@ def run_single_subject_matrix(
                 vmax=vmax,
                 n_jobs=n_jobs,
             )
-        elif areas_global_method == "pairwise":
+        elif area_matrix_method == "pairwise":
             run_areas_pairwise(
                 tract_tck=tract_tck,
                 varea_map=varea_map,
