@@ -7,7 +7,7 @@ from filelock import FileLock
 import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import FormatStrFormatter
-
+import matplotlib.colors as mcolors
 # vendored modules (placed at repo root)
 from utils import save_figure
 from fit_gaussian_connectivity import (
