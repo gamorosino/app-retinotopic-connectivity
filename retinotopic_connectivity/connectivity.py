@@ -741,6 +741,7 @@ def run_single_subject_matrix(
     make_dva_summary: bool,
     areas_per_bin: bool = False,
     area_matrix_method: str = "connectome",
+    n_jobs: int = 1,
 ):
     outdir.mkdir(parents=True, exist_ok=True)
 
