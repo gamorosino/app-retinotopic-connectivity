@@ -445,7 +445,37 @@ def plot_area_matrix(matrix: np.ndarray, title: str, path: Path, labels: List[st
     plt.tight_layout()
     save_figure(path, dpi=300)
     plt.close()
+    
+def make_smooth_colormap(color, name="custom", n_colors=256, light_mix=0.9, dark_mix=0.1):
+    """
+    Create a smooth colormap around a base color.
 
+    Parameters
+    ----------
+    color : str | hex | RGB tuple
+        Base color.
+    name : str
+        Name of the colormap.
+    n_colors : int
+        Number of gradient steps.
+    light_mix : float
+        How much white to mix for the light end.
+    dark_mix : float
+        How much black to mix for the dark end.
+    """
+
+    base = np.array(mcolors.to_rgb(color))
+    white = np.array([1, 1, 1])
+    black = np.array([0, 0, 0])
+
+    light = base * (1 - light_mix) + white * light_mix
+    dark = base * (1 - dark_mix) + black * dark_mix
+
+    colors = [light, base, dark]
+
+    cmap = mcolors.LinearSegmentedColormap.from_list(name, colors, N=n_colors)
+
+    return cmap
 
 def run_areas_per_ecc(
     tract_tck: Path,
@@ -475,6 +505,11 @@ def run_areas_per_ecc(
     tck_dir = ape_dir / "tcks"
     tck_dir.mkdir(exist_ok=True)
     color_map_list = [x.strip() for x in color_map.split(",")]
+
+    color_map_list = [
+        make_smooth_colormap(c.strip(), name=f"ecc_smooth_{i}")
+        for i, c in enumerate(color_map.split(","))
+    ]
     for idx,ecc in enumerate(ecc_bins):
         color_map=color_map_list[idx]
         for polar in polar_bins:
