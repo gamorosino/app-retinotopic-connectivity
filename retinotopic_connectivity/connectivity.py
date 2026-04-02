@@ -35,12 +35,43 @@ from fit_gaussian_connectivity import (
 from diagonal_to_braplot import compute_shell_vals, plot_radial_shells
 from matplotlib import cm, colors as mpl_colors
 from matrix_to_dva import plot_dva_bar
+from concurrent.futures import ProcessPoolExecutor
 
 # ---------------------------------------------------------------------
 # Visual area labels (Benson-style)
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+def _compute_area_pair_density(task):
+    i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order = task
+
+    tck_out.parent.mkdir(parents=True, exist_ok=True)
+
+    if not tck_out.exists():
+        count = run_tckedit(
+            tract_tck,
+            roi1,
+            roi2,
+            tck_out,
+            ends_only=ends_only,
+            roi_order=roi_order,
+        )
+    else:
+        try:
+            count = int(
+                subprocess.check_output(["tckinfo", str(tck_out), "-count"])
+                .decode()
+                .split()[-1]
+            )
+        except Exception:
+            count = 0
+
+    a1 = mask_area(roi1, roi1)
+    a2 = mask_area(roi2, roi2)
+    area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
+    density = (count / area) if area > 0 else 0.0
+
+    return i, j, density
 
 def format_colorbar(cbar, data, vmin, vmax, log_scale):
     if log_scale:
@@ -590,10 +621,11 @@ def run_areas_per_bin_pairwise(
     vmin: Optional[float],
     vmax: Optional[float],
     zero_diagonal: bool = True,
-    symmetric = True,
+    symmetric: bool = True,
+    n_jobs: int = 1,
 ):
     """
-    Areas-per-eccentricity mode using explicit pairwise ROI counting via run_tckedit().
+    Areas-per-bin mode using explicit pairwise ROI counting via run_tckedit().
 
     For each eccentricity bin (and optionally each polar bin):
       1. create a combined retinotopic mask
@@ -617,7 +649,6 @@ def run_areas_per_bin_pairwise(
     inter_dir = roi_dir / "intersections"
     inter_dir.mkdir(exist_ok=True)
 
-    # precompute full visual-area masks once
     area_masks = {
         area: extract_visual_area_mask(varea_map, area, roi_dir / f"{area}.nii.gz")
         for area in AREA_LABELS
@@ -628,13 +659,14 @@ def run_areas_per_bin_pairwise(
         for i, c in enumerate(color_map.split(","))
     ]
 
+    n_jobs = max(1, int(n_jobs))
+
     for idx, ecc in enumerate(ecc_bins):
         cmap = color_map_list[idx]
 
         for polar in polar_bins:
             use_polar = polar.lower() != "all"
 
-            # --- combined mask (ecc only or ecc x polar) ---
             if use_polar:
                 combined_mask = make_subject_patch_mask(
                     ecc_map, polar_map, ecc, polar, roi_dir / "ecc_polar"
@@ -646,7 +678,6 @@ def run_areas_per_bin_pairwise(
                 )
                 tag = f"ecc{ecc}"
 
-            # --- ROI for each visual area inside this ecc/polar bin ---
             area_bin_rois = {}
             for area in AREA_LABELS:
                 area_bin_rois[area] = intersect_masks(
@@ -655,50 +686,36 @@ def run_areas_per_bin_pairwise(
                     inter_dir / f"{area}_{tag}.nii.gz",
                 )
 
-            # --- explicit pairwise matrix ---
             M = np.zeros((n_areas, n_areas), dtype=float)
 
+            if zero_diagonal:
+                np.fill_diagonal(M, 0.0)
+
+            tasks = []
             for i, area_i in enumerate(AREA_LABELS):
-                for j, area_j in enumerate(AREA_LABELS):
-                        
+                for j in range(i, n_areas):
                     if zero_diagonal and i == j:
-                        M[i, j] = 0.0
                         continue
-                    if j < i:
-                        if symmetric:
-                            M[i, j] = M[j, i]
-                        continue    
+
                     roi1 = area_bin_rois[area_i]
-                    roi2 = area_bin_rois[area_j]
+                    roi2 = area_bin_rois[AREA_LABELS[j]]
+                    tck_out = tck_dir / f"{area_i}_{AREA_LABELS[j]}_{tag}.tck"
 
-                    tck_out = tck_dir / f"{area_i}_{area_j}_{tag}.tck"
+                    tasks.append(
+                        (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
+                    )
 
-                    if not tck_out.exists():
-                        count = run_tckedit(
-                            tract_tck,
-                            roi1,
-                            roi2,
-                            tck_out,
-                            ends_only=ends_only,
-                            roi_order=roi_order,
-                        )
-                    else:
-                        try:
-                            count = int(
-                                subprocess.check_output(
-                                    ["tckinfo", str(tck_out), "-count"]
-                                ).decode().split()[-1]
-                            )
-                        except Exception:
-                            count = 0
+            if n_jobs == 1:
+                results = [_compute_area_pair_density(task) for task in tasks]
+            else:
+                with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+                    results = list(ex.map(_compute_area_pair_density, tasks))
 
-                    a1 = mask_area(roi1, roi1)
-                    a2 = mask_area(roi2, roi2)
-                    area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
-                    density = (count / area) if area > 0 else 0.0
-                    M[i, j] = density
-                    if symmetric:
-                        M[j, i] = density
+            for i, j, density in results:
+                M[i, j] = density
+                if symmetric:
+                    M[j, i] = density
+
             out_csv = ape_dir / f"area_matrix_{tag}.csv"
             np.savetxt(out_csv, M, delimiter=",", fmt="%.6f")
 
@@ -719,6 +736,7 @@ def run_areas_per_bin_pairwise(
                 vmax=vmax,
                 log_scale=log_scale,
             )
+
 
 def run_single_subject_matrix(
     tract_tck: Path,
