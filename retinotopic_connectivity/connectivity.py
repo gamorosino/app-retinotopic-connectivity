@@ -656,7 +656,7 @@ def run_single_subject_matrix(
     )
 
     if make_dva_summary:
-        dva_dir outdir = #outdir / "dva_summary"
+        dva_dir = outdir #outdir / "dva_summary"
         dva_dir.mkdir(exist_ok=True)
         shell_vals = compute_shell_vals(M)
         plot_dva_bar(
