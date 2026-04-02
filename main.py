@@ -139,7 +139,7 @@ def main():
         if color_map == "":
             color_map = "hot"
             
-    n_jobs = int(_get(cfg, "n_jobs", 1))
+    n_jobs = int(_get(cfg, "n_jobs", -1))
     n_jobs = resolve_n_jobs(int(n_jobs))
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
