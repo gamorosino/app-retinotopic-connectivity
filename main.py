@@ -162,6 +162,7 @@ def main():
         make_dva_summary=make_dva_summary,
         areas_per_bin=areas_per_bin,
         area_matrix_method=area_matrix_method,
+        n_jobs=n_jobs
     )
 
 
