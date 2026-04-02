@@ -663,10 +663,9 @@ def run_single_subject_matrix(
         shell_vals,
         out_png=out_png,
         bar_x_dim=95,
-        base_width=4
+        base_width=4,
         y_lim=None,
-        y_decimals=4
-            )
+        y_decimals=4)
         plot_radial_shells(M, out_png=dva_dir / "dva_radial_shells.png")
 
     if fit_gaussian:
