@@ -473,7 +473,7 @@ def make_smooth_colormap(color, name="custom", n_colors=256, light_mix=0.9, dark
 
     return cmap
 
-def run_areas_per_ecc(
+def run_areas_per_bin_connectome(
     tract_tck: Path,
     ecc_map: Path,
     polar_map: Optional[Path],
@@ -488,46 +488,62 @@ def run_areas_per_ecc(
     vmax: Optional[float],
 ):
     """
-    Areas-per-eccentricity mode: for each eccentricity bin (and optionally each polar bin),
-    compute a 12×12 visual-area connectivity matrix using MRtrix tck2connectome.
+    Areas-per-eccentricity mode using MRtrix tck2connectome.
 
-    Outputs are stored under *outdir/areas_per_ecc/*.
+    For each eccentricity bin (and optionally each polar bin):
+      1. create a combined retinotopic mask
+      2. restrict the visual-area label image to that mask
+      3. filter streamlines so both endpoints lie within the mask
+      4. run tck2connectome -assignment_end_voxels
+
+    Outputs are stored under: outdir/areas_per_ecc_connectome/
     """
     n_areas = len(AREA_LABELS)
-    ape_dir = outdir / "areas_per_ecc"
+    ape_dir = outdir / "areas_per_ecc_connectome"
     ape_dir.mkdir(parents=True, exist_ok=True)
+
     roi_dir = ape_dir / "ROIs"
     roi_dir.mkdir(exist_ok=True)
+
     tck_dir = ape_dir / "tcks"
     tck_dir.mkdir(exist_ok=True)
-    color_map_list = [x.strip() for x in color_map.split(",")]
 
     color_map_list = [
         make_smooth_colormap(c.strip(), name=f"ecc_smooth_{i}")
         for i, c in enumerate(color_map.split(","))
     ]
-    for idx,ecc in enumerate(ecc_bins):
-        color_map=color_map_list[idx]
+
+    for idx, ecc in enumerate(ecc_bins):
+        cmap = color_map_list[idx]
+
         for polar in polar_bins:
             use_polar = polar.lower() != "all"
 
             # --- combined mask (ecc only or ecc x polar) ---
             if use_polar:
-                combined_mask = make_subject_patch_mask(ecc_map, polar_map, ecc, polar, roi_dir / "ecc_polar")
+                combined_mask = make_subject_patch_mask(
+                    ecc_map, polar_map, ecc, polar, roi_dir / "ecc_polar"
+                )
                 tag = f"ecc{ecc}_polar{polar}"
             else:
-                combined_mask = make_subject_patch_mask(ecc_map, None, ecc, None, roi_dir / "ecc")
+                combined_mask = make_subject_patch_mask(
+                    ecc_map, None, ecc, None, roi_dir / "ecc"
+                )
                 tag = f"ecc{ecc}"
 
             # --- masked label image (varea restricted to combined mask) ---
-            label_img = make_masked_label_image(varea_map, combined_mask, roi_dir / f"labels_{tag}.nii.gz")
+            label_img = make_masked_label_image(
+                varea_map, combined_mask, roi_dir / f"labels_{tag}.nii.gz"
+            )
 
             # --- filter tractogram: both endpoints inside combined mask ---
             filtered_tck = tck_dir / f"filtered_{tag}.tck"
             if not filtered_tck.exists():
-                run_tckedit_endpoints_in_mask(tract_tck, combined_mask, filtered_tck, ends_only=ends_only)
+                run_tckedit_endpoints_in_mask(
+                    tract_tck, combined_mask, filtered_tck, ends_only=ends_only
+                )
 
-            # --- tck2connectome (only if filtered tractogram exists) ---
+            # --- tck2connectome ---
             out_csv = ape_dir / f"area_matrix_{tag}.csv"
             if filtered_tck.exists() and not out_csv.exists():
                 run_tck2connectome(filtered_tck, label_img, out_csv, n_nodes=n_areas)
@@ -552,12 +568,146 @@ def run_areas_per_ecc(
                 title,
                 ape_dir / f"area_matrix_{tag}",
                 AREA_LABELS,
-                cmap=color_map,
+                cmap=cmap,
                 vmin=vmin,
                 vmax=vmax,
                 log_scale=log_scale,
             )
 
+
+def run_areas_per_bin_pairwise(
+    tract_tck: Path,
+    ecc_map: Path,
+    polar_map: Optional[Path],
+    varea_map: Path,
+    ecc_bins: List[str],
+    polar_bins: List[str],
+    outdir: Path,
+    ends_only: bool,
+    roi_order: bool,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+):
+    """
+    Areas-per-eccentricity mode using explicit pairwise ROI counting via run_tckedit().
+
+    For each eccentricity bin (and optionally each polar bin):
+      1. create a combined retinotopic mask
+      2. intersect that mask with each visual area
+      3. explicitly count streamlines between every pair of visual areas
+         using run_tckedit(..., ends_only=..., roi_order=...)
+      4. build the 12x12 density matrix manually
+
+    Outputs are stored under: outdir/areas_per_ecc_pairwise/
+    """
+    n_areas = len(AREA_LABELS)
+    ape_dir = outdir / "areas_per_ecc_pairwise"
+    ape_dir.mkdir(parents=True, exist_ok=True)
+
+    roi_dir = ape_dir / "ROIs"
+    roi_dir.mkdir(exist_ok=True)
+
+    tck_dir = ape_dir / "tcks"
+    tck_dir.mkdir(exist_ok=True)
+
+    inter_dir = roi_dir / "intersections"
+    inter_dir.mkdir(exist_ok=True)
+
+    # precompute full visual-area masks once
+    area_masks = {
+        area: extract_visual_area_mask(varea_map, area, roi_dir / f"{area}.nii.gz")
+        for area in AREA_LABELS
+    }
+
+    color_map_list = [
+        make_smooth_colormap(c.strip(), name=f"ecc_smooth_{i}")
+        for i, c in enumerate(color_map.split(","))
+    ]
+
+    for idx, ecc in enumerate(ecc_bins):
+        cmap = color_map_list[idx]
+
+        for polar in polar_bins:
+            use_polar = polar.lower() != "all"
+
+            # --- combined mask (ecc only or ecc x polar) ---
+            if use_polar:
+                combined_mask = make_subject_patch_mask(
+                    ecc_map, polar_map, ecc, polar, roi_dir / "ecc_polar"
+                )
+                tag = f"ecc{ecc}_polar{polar}"
+            else:
+                combined_mask = make_subject_patch_mask(
+                    ecc_map, None, ecc, None, roi_dir / "ecc"
+                )
+                tag = f"ecc{ecc}"
+
+            # --- ROI for each visual area inside this ecc/polar bin ---
+            area_bin_rois = {}
+            for area in AREA_LABELS:
+                area_bin_rois[area] = intersect_masks(
+                    combined_mask,
+                    area_masks[area],
+                    inter_dir / f"{area}_{tag}.nii.gz",
+                )
+
+            # --- explicit pairwise matrix ---
+            M = np.zeros((n_areas, n_areas), dtype=float)
+
+            for i, area_i in enumerate(AREA_LABELS):
+                for j, area_j in enumerate(AREA_LABELS):
+                    roi1 = area_bin_rois[area_i]
+                    roi2 = area_bin_rois[area_j]
+
+                    tck_out = tck_dir / f"{area_i}_{area_j}_{tag}.tck"
+
+                    if not tck_out.exists():
+                        count = run_tckedit(
+                            tract_tck,
+                            roi1,
+                            roi2,
+                            tck_out,
+                            ends_only=ends_only,
+                            roi_order=roi_order,
+                        )
+                    else:
+                        try:
+                            count = int(
+                                subprocess.check_output(
+                                    ["tckinfo", str(tck_out), "-count"]
+                                ).decode().split()[-1]
+                            )
+                        except Exception:
+                            count = 0
+
+                    a1 = mask_area(roi1, roi1)
+                    a2 = mask_area(roi2, roi2)
+                    area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
+                    density = (count / area) if area > 0 else 0.0
+                    M[i, j] = density
+
+            out_csv = ape_dir / f"area_matrix_{tag}.csv"
+            np.savetxt(out_csv, M, delimiter=",", fmt="%.6f")
+
+            ecc_label = ecc.replace("_", "–")
+            if use_polar:
+                polar_label = polar.replace("_", "–")
+                title = f"Area connectivity  ecc {ecc_label}°  polar {polar_label}°"
+            else:
+                title = f"Area connectivity  ecc {ecc_label}°"
+
+            plot_area_matrix(
+                M,
+                title,
+                ape_dir / f"area_matrix_{tag}",
+                AREA_LABELS,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                log_scale=log_scale,
+            )
 
 def run_single_subject_matrix(
     tract_tck: Path,
@@ -579,25 +729,48 @@ def run_single_subject_matrix(
     fit_truncated_gaussian_normalized: bool,
     make_dva_summary: bool,
     areas_per_ecc: bool = False,
+    area_matrix_method: str = "connectome",
 ):
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # --- areas_per_ecc mode: 12×12 area connectivity matrix per eccentricity bin ---
+    # --- areas_per_ecc mode ---
     if areas_per_ecc:
-        run_areas_per_ecc(
-            tract_tck=tract_tck,
-            ecc_map=ecc_map,
-            polar_map=polar_map,
-            varea_map=varea_map,
-            ecc_bins=ecc_bins,
-            polar_bins=polar_bins,
-            outdir=outdir,
-            ends_only=ends_only,
-            color_map=color_map,
-            log_scale=log_scale,
-            vmin=vmin,
-            vmax=vmax,
-        )
+        if area_matrix_method == "connectome":
+            run_areas_per_bin_connectome(
+                tract_tck=tract_tck,
+                ecc_map=ecc_map,
+                polar_map=polar_map,
+                varea_map=varea_map,
+                ecc_bins=ecc_bins,
+                polar_bins=polar_bins,
+                outdir=outdir,
+                ends_only=ends_only,
+                color_map=color_map,
+                log_scale=log_scale,
+                vmin=vmin,
+                vmax=vmax,
+            )
+        elif area_matrix_method == "pairwise":
+            run_areas_per_bin_pairwise(
+                tract_tck=tract_tck,
+                ecc_map=ecc_map,
+                polar_map=polar_map,
+                varea_map=varea_map,
+                ecc_bins=ecc_bins,
+                polar_bins=polar_bins,
+                outdir=outdir,
+                ends_only=ends_only,
+                roi_order=roi_order,
+                color_map=color_map,
+                log_scale=log_scale,
+                vmin=vmin,
+                vmax=vmax,
+            )
+        else:
+            raise ValueError(
+                f"Unknown area_matrix_method '{area_matrix_method}'. "
+                f"Valid options are: 'connectome', 'pairwise'."
+            )
         return
 
     roi_dir = outdir / "ROIs"
@@ -656,16 +829,17 @@ def run_single_subject_matrix(
     )
 
     if make_dva_summary:
-        dva_dir = outdir #outdir / "dva_summary"
+        dva_dir = outdir
         dva_dir.mkdir(exist_ok=True)
         shell_vals = compute_shell_vals(M)
         plot_dva_bar(
-        shell_vals,
-        out_png=dva_dir / "dva_barplot.png",
-        bar_x_dim=95,
-        base_width=4,
-        y_lim=None,
-        y_decimals=4)
+            shell_vals,
+            out_png=dva_dir / "dva_bar.png",
+            bar_x_dim=95,
+            base_width=4,
+            y_lim=None,
+            y_decimals=4,
+        )
         plot_radial_shells(M, out_png=dva_dir / "dva_radial_shells.png")
 
     if fit_gaussian:
