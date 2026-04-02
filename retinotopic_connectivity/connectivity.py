@@ -496,10 +496,10 @@ def run_areas_per_bin_connectome(
       3. filter streamlines so both endpoints lie within the mask
       4. run tck2connectome -assignment_end_voxels
 
-    Outputs are stored under: outdir/areas_per_ecc_connectome/
+    Outputs are stored under: outdir/areas_per_bin_connectome/
     """
     n_areas = len(AREA_LABELS)
-    ape_dir = outdir / "areas_per_ecc_connectome"
+    ape_dir = outdir / "areas_per_bin_connectome"
     ape_dir.mkdir(parents=True, exist_ok=True)
 
     roi_dir = ape_dir / "ROIs"
@@ -600,10 +600,10 @@ def run_areas_per_bin_pairwise(
          using run_tckedit(..., ends_only=..., roi_order=...)
       4. build the 12x12 density matrix manually
 
-    Outputs are stored under: outdir/areas_per_ecc_pairwise/
+    Outputs are stored under: outdir/areas_per_bin_pairwise/
     """
     n_areas = len(AREA_LABELS)
-    ape_dir = outdir / "areas_per_ecc_pairwise"
+    ape_dir = outdir / "areas_per_bin_pairwise"
     ape_dir.mkdir(parents=True, exist_ok=True)
 
     roi_dir = ape_dir / "ROIs"
@@ -728,13 +728,13 @@ def run_single_subject_matrix(
     fit_gaussian: bool,
     fit_truncated_gaussian_normalized: bool,
     make_dva_summary: bool,
-    areas_per_ecc: bool = False,
+    areas_per_bin: bool = False,
     area_matrix_method: str = "connectome",
 ):
     outdir.mkdir(parents=True, exist_ok=True)
 
-    # --- areas_per_ecc mode ---
-    if areas_per_ecc:
+    # --- areas_per_bin mode ---
+    if areas_per_bin:
         if area_matrix_method == "connectome":
             run_areas_per_bin_connectome(
                 tract_tck=tract_tck,
