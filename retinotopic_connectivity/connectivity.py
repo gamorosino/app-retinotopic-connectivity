@@ -42,7 +42,29 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+def resolve_cmap(color_map: str):
+    """
+    Normalize color_map into a valid matplotlib colormap.
+    """
+    if not color_map:
+        return "viridis"
 
+    # multiple colors → take first (global mode)
+    if "," in color_map:
+        color_map = color_map.split(",")[0].strip()
+
+    # try matplotlib cmap
+    try:
+        plt.get_cmap(color_map)
+        return color_map
+    except Exception:
+        pass
+
+    # assume it's a color → build smooth cmap
+    try:
+        return make_smooth_colormap(color_map)
+    except Exception:
+        return "viridis"
 
 def _compute_area_pair_density(task):
     i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order = task
@@ -816,12 +838,13 @@ def run_areas_connectome(
     except Exception:
         M = np.zeros((n_areas, n_areas))
 
+    cmap = resolve_cmap(color_map)
     plot_area_matrix(
         M,
         "Visual area connectivity",
         outdir / "area_matrix",
         AREA_LABELS,
-        cmap=color_map,
+        cmap=cmap,
         vmin=vmin,
         vmax=vmax,
         log_scale=log_scale,
@@ -895,13 +918,15 @@ def run_areas_pairwise(
 
     out_csv = outdir / "area_matrix.csv"
     np.savetxt(out_csv, M, delimiter=",", fmt="%.6f")
-
+    
+    cmap = resolve_cmap(color_map)
+    
     plot_area_matrix(
         M,
         "Visual area connectivity",
         outdir / "area_matrix",
         AREA_LABELS,
-        cmap=color_map,
+        cmap=cmap,
         vmin=vmin,
         vmax=vmax,
         log_scale=log_scale,
