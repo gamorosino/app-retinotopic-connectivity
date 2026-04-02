@@ -60,6 +60,10 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    if area_per_ecc:
+        if color_map == '':
+            color_map="#2ca02c,#006400,#0082b0,#0044b0"
+    
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
         ecc_map=Path(args.ecc),
