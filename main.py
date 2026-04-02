@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 
 from retinotopic_connectivity.connectivity import run_single_subject_matrix
-
+import matplotlib.pyplot as plt
+from matplotlib.colors import to_hex
 
 def _get(cfg, key, default=None):
     if cfg is None:
@@ -60,6 +61,16 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    if color_map == '':
+        if areas_per_ecc:
+  
+            n = len(ecc_bins)
+            cmap = plt.get_cmap("viridis")  
+            colors = [to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
+            color_map = ",".join(colors)
+        else:
+            color_map = 'hot'
+    
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
         ecc_map=Path(args.ecc),
