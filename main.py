@@ -60,8 +60,8 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    if areas_per_ecc:
-        if color_map == '':
+    if color_map == '':
+        if areas_per_ecc:
             import matplotlib.pyplot as plt
             import matplotlib.colors as mcolors
     
@@ -70,6 +70,8 @@ def main():
     
             colors = [mcolors.to_hex(cmap(i / max(n - 1, 1))) for i in range(n)]
             color_map = ",".join(colors)
+        else:
+            color_map = 'hot'
     
     run_single_subject_matrix(
         tract_tck=Path(args.tck),
