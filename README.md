@@ -90,41 +90,208 @@ This app expects inputs to be available under `./input/` (Brainlife-style):
 
 ### Mode A – area-to-area ecc×ecc matrix (default)
 
-Set `areas_per_ecc: false` (or omit the key).
+Set:
+
+```json
+"areas_per_bin": false
+```
 
 For each pair of eccentricity bins *(i, j)* the app:
-1. Creates eccentricity (and optionally polar) ROI patches for each of the two visual areas.
-2. Filters the tractogram with `tckedit` (`-include roi1 -include roi2 [-ends_only]`).
-3. Counts the resulting streamlines and normalises by ROI volume (mm³) to obtain a **streamline density**.
-4. Sums over all polar bins (if polar bins are provided).
 
-**Outputs** (under `output/`):
-- `matrix.csv` — *N×N* streamline-density matrix
-- `matrix.png`
-
-### Mode B – `areas_per_ecc` per-eccentricity 12×12 area matrix
-
-Set `areas_per_ecc: true`.
-
-For each eccentricity bin (and each polar bin, or all-polar if `polar_bins: "all"`) the app:
-1. Creates a combined mask (eccentricity only, or eccentricity ∩ polar).
-2. Multiplies `varea.nii.gz` by the combined mask to obtain a **label image** restricted to that bin.
-3. Filters the tractogram with `tckedit` so that **both streamline endpoints** lie within the combined mask (`-include mask -include mask [-ends_only]`).
-4. Runs `tck2connectome` with flags `-symmetric -zero_diagonal -assignment_end_voxels -scale_invnodevol -force` to compute the 12×12 area connectivity matrix.
-5. Saves the result as a CSV and plots a PNG.
-
-**Output naming**:
-- Eccentricity-only (`polar_bins: "all"`): `area_matrix_ecc{bin}.csv` / `.png`
-- With polar bins: `area_matrix_ecc{bin}_polar{bin}.csv` / `.png`
-
-**Outputs** (under `output/areas_per_ecc/`):
-- `area_matrix_ecc*.csv` — 12×12 connectivity matrices
-- `area_matrix_ecc*.png` — heatmap plots
-- `ROIs/` — generated eccentricity/polar/label masks
-- `tcks/` — filtered `.tck` files
+1. Creates eccentricity (and optionally polar) ROI patches for two visual areas.
+2. Filters streamlines using `tckedit`.
+3. Computes streamline counts and normalizes by ROI volume.
+4. Builds an **ecc×ecc connectivity matrix**.
 
 ---
 
+### Mode B – `areas_per_bin` (per-bin 12×12 area matrices)
+
+Set:
+
+```json
+"areas_per_bin": true
+```
+
+For each bin (eccentricity and optionally polar), the app computes a **12×12 visual-area connectivity matrix** across all Benson areas.
+
+Two backends are available:
+
+---
+
+#### Backend 1 — `"connectome"` (default)
+
+```json
+"area_matrix_method": "connectome"
+```
+
+Pipeline:
+
+1. Build bin mask (ecc or ecc×polar)
+2. Restrict `varea.nii.gz` to the mask
+3. Filter streamlines so both endpoints lie inside the bin
+4. Run:
+
+```bash
+tck2connectome -symmetric -zero_diagonal -assignment_end_voxels -scale_invnodevol
+```
+
+This approach is:
+
+* fast
+* MRtrix-native
+* based on endpoint assignment
+
+---
+
+#### Backend 2 — `"pairwise"` (strict mode)
+
+```json
+"area_matrix_method": "pairwise"
+```
+
+Pipeline:
+
+1. Build bin mask
+2. Intersect mask with each visual area
+3. For every area pair `(Ai, Aj)`:
+
+   * run:
+
+```bash
+tckedit -include ROI_i -include ROI_j [-ends_only]
+```
+
+4. Count streamlines explicitly and normalize by ROI volume
+
+This approach is:
+
+* stricter (explicit streamline selection)
+* slower
+* fully controlled (`roi_order`, `ends_only`)
+
+---
+
+### Important difference
+
+| Method       | Definition of connectivity    |
+| ------------ | ----------------------------- |
+| `connectome` | endpoint voxel assignment     |
+| `pairwise`   | explicit streamline filtering |
+
+These methods are not equivalent and may produce different results.
+
+---
+
+## 2. Outputs (UPDATED)
+
+Replace Mode B outputs:
+
+---
+
+### Mode B (`areas_per_bin`)
+
+Outputs depend on backend:
+
+#### connectome
+
+```
+output/areas_per_bin_connectome/
+```
+
+#### pairwise
+
+```
+output/areas_per_bin_pairwise/
+```
+
+Contents:
+
+* `area_matrix_*.csv` — 12×12 matrices
+* `area_matrix_*.png` — heatmaps
+* `ROIs/` — bin masks and intersections
+* `tcks/` — intermediate streamline subsets
+
+---
+
+## 3. Configuration (UPDATED)
+
+### Mode selection
+
+| key                  | type   | default        | meaning                        |
+| -------------------- | ------ | -------------- | ------------------------------ |
+| `areas_per_bin`      | bool   | false          | Enable per-bin area matrices   |
+| `area_matrix_method` | string | `"connectome"` | `"connectome"` or `"pairwise"` |
+
+---
+
+### Pairwise-specific behavior
+
+(only applies if `"pairwise"`)
+
+| key         | type | default | meaning                      |
+| ----------- | ---- | ------- | ---------------------------- |
+| `ends_only` | bool | true    | Use endpoint-only filtering  |
+| `roi_order` | bool | false   | Ordered streamline filtering |
+
+---
+
+### Matrix structure
+
+Pairwise backend uses:
+
+* `zero_diagonal = True` (diagonal entries skipped)
+* matrix is intrinsically symmetric
+
+For efficiency:
+
+* only the upper triangle is computed
+* the lower triangle is reconstructed when needed
+
+---
+
+## 4. Color handling (NEW)
+
+`color_map` behavior in `areas_per_bin` mode:
+
+| input                 | behavior                                    |
+| --------------------- | ------------------------------------------- |
+| `""`                  | defaults to `viridis`                       |
+| `"viridis"` / `"jet"` | samples from matplotlib colormap            |
+| `"red"` / `"#ff0000"` | creates a smooth custom colormap            |
+| `"c1,c2,...,cN"`      | explicit colors (must match number of bins) |
+
+---
+
+## 5. Example configs (UPDATED)
+
+### Pairwise strict mode
+
+```json
+{
+  "areas_per_bin": true,
+  "area_matrix_method": "pairwise",
+  "ecc_bins": "0-2,2-4,4-6,6-8",
+  "polar_bins": "all",
+  "ends_only": true,
+  "roi_order": false,
+  "color_map": "",
+  "log_scale": false
+}
+```
+
+---
+
+### Connectome mode (default)
+
+```json
+{
+  "areas_per_bin": true,
+  "area_matrix_method": "connectome",
+  "ecc_bins": "0-2,2-4,4-6,6-8",
+  "polar_bins": "all"
+}
+```
 ## Outputs
 
 ### Mode A
