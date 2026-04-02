@@ -474,8 +474,9 @@ def run_areas_per_ecc(
     roi_dir.mkdir(exist_ok=True)
     tck_dir = ape_dir / "tcks"
     tck_dir.mkdir(exist_ok=True)
-
-    for ecc in ecc_bins:
+    color_map_list = [x.strip() for x in color_map.split(",")]
+    for idx,ecc in enumerate(ecc_bins):
+        color_map=color_map_list[idx]
         for polar in polar_bins:
             use_polar = polar.lower() != "all"
 
