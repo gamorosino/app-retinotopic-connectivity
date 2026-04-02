@@ -661,7 +661,7 @@ def run_single_subject_matrix(
         shell_vals = compute_shell_vals(M)
         plot_dva_bar(
         shell_vals,
-        out_png=out_png,
+        out_png=dva_dir / "dva_barplot.png",
         bar_x_dim=95,
         base_width=4,
         y_lim=None,
