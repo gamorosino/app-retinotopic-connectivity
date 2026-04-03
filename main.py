@@ -125,9 +125,13 @@ def main():
     fit_trunc_norm = bool(_get(cfg, "fit_truncated_gaussian_normalized", False))
     make_dva_summary = bool(_get(cfg, "make_dva_summary", False))
 
-    # renamed from areas_per_ecc -> areas_per_bin
-    areas_per_bin = bool(_get(cfg, "areas_per_bin", False))
+    mode = str(_get(cfg, "mode", "bin_by_bin")).strip().lower()
 
+    valid_modes = {"area_by_area", "bin_by_bin"}
+    if mode not in valid_modes:
+        raise ValueError(
+            f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
+        )
     # new: choose backend for area-per-bin mode
     area_matrix_method = str(_get(cfg, "area_matrix_method", "connectome")).strip().lower()
     if area_matrix_method not in {"connectome", "pairwise"}:
@@ -166,7 +170,7 @@ def main():
         fit_gaussian=fit_gaussian,
         fit_truncated_gaussian_normalized=fit_trunc_norm,
         make_dva_summary=make_dva_summary,
-        areas_per_bin=areas_per_bin,
+        mode=mode,
         area_matrix_method=area_matrix_method,
         n_jobs=n_jobs,
         areas_global=is_global_mode
