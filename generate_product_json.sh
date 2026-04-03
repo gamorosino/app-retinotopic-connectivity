@@ -12,11 +12,10 @@ fi
 
 qa_entries=()
 
-for image in ./output/*.png; do
-    if [ -f "$image" ]; then
-        base=$(basename "$image" .png)
+for image in $(find ./output -name "*.png"); do
+    base=$(basename "$image" .png)
 
-        qa_entry=$(cat <<EOF
+    qa_entry=$(cat <<EOF
 {
   "type": "image/png",
   "name": "$base",
@@ -24,8 +23,8 @@ for image in ./output/*.png; do
 }
 EOF
 )
-        qa_entries+=("$qa_entry")
-    fi
+
+    qa_entries+=("$qa_entry")
 done
 
 if [ ${#qa_entries[@]} -eq 0 ]; then
