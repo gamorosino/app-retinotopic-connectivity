@@ -1084,7 +1084,7 @@ def run_bin_by_bin_matrix_pairwise(
         for e in ecc_bins
         for polar in polar_bins
     ]
-    results_roi=parallel_map(_build_roi_pair, tasks_roi,n_jobs)
+    results_roi = [_build_roi_pair(t) for t in tasks_roi]
     roiA_cache = {}
     roiB_cache = {}
 
