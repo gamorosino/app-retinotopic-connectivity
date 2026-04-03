@@ -18,15 +18,18 @@ def resolve_n_jobs(n_jobs: int) -> int:
     Rules
     -----
     n_jobs = -1  -> use all available CPUs
-    n_jobs >= 1  -> use that exact number
+    n_jobs >= 1  -> use min(n_jobs, available CPUs)
     otherwise    -> raise ValueError
     """
-    if n_jobs == -1:
-        return max(1, os.cpu_count() or 1)
-    if n_jobs >= 1:
-        return n_jobs
-    raise ValueError("n_jobs must be -1 or >= 1")
+    max_cpus = max(1, os.cpu_count() or 1)
 
+    if n_jobs == -1:
+        return max_cpus
+
+    if n_jobs >= 1:
+        return min(n_jobs, max_cpus)
+
+    raise ValueError("n_jobs must be -1 or >= 1")
 
 def resolve_area_bin_colors(color_map: str, n_bins: int) -> str:
     color_map = (color_map or "").strip()
