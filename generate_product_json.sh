@@ -9,36 +9,26 @@ datatype_tags_str=""
 if [ ${#datatype_tags[@]} -gt 0 ]; then
     datatype_tags_str=$(join_by , "${datatype_tags[@]}")
 fi
+
 qa_entries=()
 
 echo "==== DEBUG: scanning for images ===="
-images=$(find ./output -name "*.png")
+while IFS= read -r image; do
+    echo "Processing image: $image"
 
-if [ -z "$images" ]; then
-    echo "No PNG images found"
-else
-    for image in $images; do
-        echo "Processing image: $image"
+    base=$(basename "$image" .png)
 
-        base=$(basename "$image" .png)
+    entry=$(printf '{"type":"image/png","name":"%s","base64":"%s"}' \
+        "$base" \
+        "$(base64 -w 0 "$image")")
 
-        entry=$(printf '{
-  "type": "image/png",
-  "name": "%s",
-  "base64": "%s"
-}' "$base" "$(base64 -w 0 "$image")")
-
-        qa_entries+=("$entry")
-    done
-fi
+    qa_entries+=("$entry")
+done < <(find ./output -name "*.png" | sort)
 
 echo "==== DEBUG: number of entries: ${#qa_entries[@]} ===="
 
 if [ ${#qa_entries[@]} -eq 0 ]; then
-    brainlife_json='{
-        "type": "error",
-        "msg": "Failed to generate output image."
-    }'
+    brainlife_json='{"type":"error","msg":"Failed to generate output image."}'
 else
     brainlife_json=$(printf '%s\n' "${qa_entries[@]}" | paste -sd, -)
 fi
