@@ -16,7 +16,7 @@ mkdir -p qa/previews
 qa_entries=()
 
 while IFS= read -r -d '' image; do
-    #base="$(basename "$image" .png)"
+    base="$(basename "$image" .png)"
     #jpg="qa/previews/${base}.jpg"
 
     #convert "$image" -resize 50% -trim -quality 90 "$jpg"
