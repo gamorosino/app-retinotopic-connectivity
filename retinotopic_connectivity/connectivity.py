@@ -138,29 +138,48 @@ def _compute_bin_by_bin_matrix_cell_precomputed(task):
 
     return i, j, total_density
 
-def resolve_cmap(color_map: str):
+def resolve_cmap(color_map):
     """
-    Normalize color_map into a valid matplotlib colormap.
+    Normalize color_map into a valid matplotlib colormap or cmap name.
+
+    Accepts
+    -------
+    - None / ""                        -> default "viridis"
+    - matplotlib colormap object       -> returned as is
+    - "viridis"                        -> valid matplotlib cmap name
+    - "#440154" or "red"               -> converted to smooth custom cmap
+    - "red,blue,green"                 -> first entry only (global/single-matrix mode)
     """
-    if not color_map:
+    if color_map is None or color_map == "":
         return "viridis"
 
-    # multiple colors → take first (global mode)
+    # already a matplotlib colormap object
+    if isinstance(color_map, mpl_colors.Colormap):
+        return color_map
+
+    # ensure string handling from here onward
+    if not isinstance(color_map, str):
+        raise TypeError(
+            f"color_map must be a string or matplotlib Colormap, got {type(color_map)}"
+        )
+
+    # multiple colors -> keep only first for single-matrix modes
     if "," in color_map:
         color_map = color_map.split(",")[0].strip()
 
-    # try matplotlib cmap
+    # valid matplotlib cmap name
     try:
         plt.get_cmap(color_map)
         return color_map
     except Exception:
         pass
 
-    # assume it's a color → build smooth cmap
+    # valid single color -> build smooth colormap
     try:
-        return make_smooth_colormap(color_map)
+        mcolors.to_rgb(color_map)
+        return make_smooth_colormap(color_map, name=f"custom_{color_map}")
     except Exception:
-        return plt.get_cmap("viridis")
+        return "viridis"
 
 def _compute_area_pair_density(task):
     i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order = task
