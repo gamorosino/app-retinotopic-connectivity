@@ -49,9 +49,10 @@ def normalize_tag(x):
     return "all" if x.lower() == "all" else x
 
 def parallel_map(func, tasks, n_jobs):
+    n_jobs = max(1, int(n_jobs))
     if n_jobs == 1:
         return [func(t) for t in tasks]
-    chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
+    chunksize = max(1, len(tasks) // max(1, n_jobs * 8))
     with ProcessPoolExecutor(max_workers=n_jobs) as ex:
         return list(ex.map(func, tasks, chunksize=chunksize))
 
