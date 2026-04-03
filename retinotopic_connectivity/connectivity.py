@@ -42,6 +42,101 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+def normalize_tag(x):
+    if x is None:
+        return "all"
+    x = str(x)
+    return "all" if x.lower() == "all" else x
+
+def parallel_map(func, tasks, n_jobs):
+    if n_jobs == 1:
+        return [func(t) for t in tasks]
+    chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
+    with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+        return list(ex.map(func, tasks, chunksize=chunksize))
+
+
+def _build_roi_pair(task):
+    (
+        e, polar,
+        ecc_map, polar_map,
+        roi_dir, inter_dir,
+        areaA_mask, areaB_mask,
+        visual_area_a, visual_area_b
+    ) = task
+
+    polar_tag = normalize_tag(polar)
+
+    if polar_tag == "all":
+        roi_tmp = make_subject_patch_mask(ecc_map, None, e, None, roi_dir / "ecc")
+    else:
+        roi_tmp = make_subject_patch_mask(ecc_map, polar_map, e, polar, roi_dir / "ecc_polar")
+
+    roiA = intersect_masks(
+        roi_tmp,
+        areaA_mask,
+        inter_dir / f"{visual_area_a}_ecc{e}_polar{polar_tag}.nii.gz"
+    )
+
+    roiB = intersect_masks(
+        roi_tmp,
+        areaB_mask,
+        inter_dir / f"{visual_area_b}_ecc{e}_polar{polar_tag}.nii.gz"
+    )
+
+    return (e, polar_tag, roiA, roiB)
+
+def _compute_ecc_matrix_cell_precomputed(task):
+    (
+        i, j, e1, e2,
+        roiA_cache, roiB_cache,
+        areaA_cache, areaB_cache,
+        tract_tck, polar_bins, outdir,
+        visual_area_a, visual_area_b,
+        ends_only, roi_order,
+    ) = task
+
+    total_density = 0.0
+
+    for polar in polar_bins:
+        polar_tag = normalize_tag(polar)
+
+        roi1 = roiA_cache[(e1, polar_tag)]
+        roi2 = roiB_cache[(e2, polar_tag)]
+
+        a1 = areaA_cache[(e1, polar_tag)]
+        a2 = areaB_cache[(e2, polar_tag)]
+
+        if a1 == 0 or a2 == 0:
+            continue
+
+        tck_out = outdir / "tcks" / f"{visual_area_a}_{visual_area_b}_{e1}_{e2}_polar{polar_tag}.tck"
+
+        if not tck_out.exists():
+            count = run_tckedit(
+                tract_tck,
+                roi1,
+                roi2,
+                tck_out,
+                ends_only=ends_only,
+                roi_order=roi_order,
+            )
+        else:
+            try:
+                count = int(
+                    subprocess.check_output(["tckinfo", str(tck_out), "-count"])
+                    .decode()
+                    .split()[-1]
+                )
+            except Exception:
+                count = 0
+
+        area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
+        density = (count / area) if area > 0 else 0.0
+        total_density += density
+
+    return i, j, total_density
+
 def resolve_cmap(color_map: str):
     """
     Normalize color_map into a valid matplotlib colormap.
@@ -64,7 +159,7 @@ def resolve_cmap(color_map: str):
     try:
         return make_smooth_colormap(color_map)
     except Exception:
-        return "viridis"
+        return plt.get_cmap("viridis")
 
 def _compute_area_pair_density(task):
     i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order = task
@@ -601,11 +696,14 @@ def run_areas_per_bin_connectome(
     tck_dir = ape_dir / "tcks"
     tck_dir.mkdir(exist_ok=True)
 
-    color_map_list = [
-        make_smooth_colormap(c.strip(), name=f"ecc_smooth_{i}")
-        for i, c in enumerate(color_map.split(","))
-    ]
+    if not color_map:
+        color_map_list = [plt.get_cmap("viridis")] * len(ecc_bins)
+    else:
+        color_map_list = [resolve_cmap(c.strip()) for c in color_map.split(",")]
 
+    if len(color_map_list) != len(ecc_bins):
+        raise ValueError("Number of colors must match number of ecc bins")
+    mat_dict={}
     for idx, ecc in enumerate(ecc_bins):
         cmap = color_map_list[idx]
 
@@ -655,7 +753,9 @@ def run_areas_per_bin_connectome(
                 title = f"Area connectivity  ecc {ecc_label}°  polar {polar_label}°"
             else:
                 title = f"Area connectivity  ecc {ecc_label}°"
-
+            polar_tag = normalize_tag(polar)
+            ecc_tag = normalize_tag(ecc)     
+            mat_dict[ecc_tag,polar_tag]=mat
             plot_area_matrix(
                 mat,
                 title,
@@ -666,7 +766,7 @@ def run_areas_per_bin_connectome(
                 vmax=vmax,
                 log_scale=log_scale,
             )
-
+    return mat_dict
 
 def run_areas_per_bin_pairwise(
     tract_tck: Path,
@@ -717,12 +817,12 @@ def run_areas_per_bin_pairwise(
     }
 
     color_map_list = [
-        make_smooth_colormap(c.strip(), name=f"ecc_smooth_{i}")
-        for i, c in enumerate(color_map.split(","))
-    ]
+        resolve_cmap(c.strip())
+        for c in color_map.split(",")
+    ] if color_map else [plt.get_cmap("viridis")] * len(ecc_bins)
 
     n_jobs = max(1, int(n_jobs))
-
+    mat_dict={}
     for idx, ecc in enumerate(ecc_bins):
         cmap = color_map_list[idx]
 
@@ -769,14 +869,7 @@ def run_areas_per_bin_pairwise(
                     tasks.append(
                         (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
                     )
-            
-            if n_jobs == 1:
-                results = [_compute_area_pair_density(task) for task in tasks]
-            else:
-                chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
-                with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-                    results = list(ex.map(_compute_area_pair_density, tasks, chunksize=chunksize))
-            
+            results = parallel_map(_compute_area_pair_density, tasks, n_jobs)
             for i, j, density in results:
                 M[i, j] = density
                 if symmetric:
@@ -791,7 +884,9 @@ def run_areas_per_bin_pairwise(
                 title = f"Area connectivity  ecc {ecc_label}°  polar {polar_label}°"
             else:
                 title = f"Area connectivity  ecc {ecc_label}°"
-
+            polar_tag = normalize_tag(polar)
+            ecc_tag = normalize_tag(ecc)     
+            mat_dict[ecc_tag,polar_tag]=M
             plot_area_matrix(
                 M,
                 title,
@@ -802,7 +897,8 @@ def run_areas_per_bin_pairwise(
                 vmax=vmax,
                 log_scale=log_scale,
             )
-
+    return mat_dict
+    
 def run_areas_connectome(
     tract_tck: Path,
     varea_map: Path,
@@ -849,6 +945,8 @@ def run_areas_connectome(
         vmax=vmax,
         log_scale=log_scale,
     )
+    return M
+    
 def run_areas_pairwise(
     tract_tck: Path,
     varea_map: Path,
@@ -903,14 +1001,7 @@ def run_areas_pairwise(
             tasks.append(
                 (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
             )
-
-    if n_jobs == 1:
-        results = [_compute_area_pair_density(task) for task in tasks]
-    else:
-        chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
-        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-            results = list(ex.map(_compute_area_pair_density, tasks, chunksize=chunksize))
-
+    results = parallel_map(_compute_area_pair_density, tasks, n_jobs)
     for i, j, density in results:
         M[i, j] = density
         if symmetric:
@@ -931,7 +1022,119 @@ def run_areas_pairwise(
         vmax=vmax,
         log_scale=log_scale,
     )
+    return M
 
+def run_ecc_matrix_pairwise(
+    tract_tck: Path,
+    ecc_map: Path,
+    polar_map: Path,
+    varea_map: Path,
+    ecc_bins: List[str],
+    polar_bins: List[str],
+    visual_area_a: str,
+    visual_area_b: str,
+    outdir: Path,
+    ends_only: bool,
+    roi_order: bool,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+    n_jobs: int = 1,
+) -> np.ndarray:
+    """
+    Compute the original ecc x ecc connectivity matrix between two visual areas
+    using explicit pairwise streamline filtering, with optional parallelization.
+    """
+    n_jobs = max(1, int(n_jobs))
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    roi_dir = outdir / "ROIs"
+    roi_dir.mkdir(exist_ok=True)
+
+    tck_dir = outdir / "tcks"
+    tck_dir.mkdir(exist_ok=True)
+
+    inter_dir = roi_dir / "intersections"
+    inter_dir.mkdir(exist_ok=True)
+
+    areaA_mask = extract_visual_area_mask(
+        varea_map, visual_area_a, roi_dir / f"{visual_area_a}.nii.gz"
+    )
+    areaB_mask = extract_visual_area_mask(
+        varea_map, visual_area_b, roi_dir / f"{visual_area_b}.nii.gz"
+    )
+
+    tasks_roi = [
+        (
+            e,
+            polar,
+            ecc_map,
+            polar_map,
+            roi_dir,
+            inter_dir,
+            areaA_mask,
+            areaB_mask,
+            visual_area_a,
+            visual_area_b,
+        )
+        for e in ecc_bins
+        for polar in polar_bins
+    ]
+    results_roi=parallel_map(_build_roi_pair, tasks_roi,n_jobs)
+    roiA_cache = {}
+    roiB_cache = {}
+
+    for e, polar_tag, roiA, roiB in results_roi:
+        roiA_cache[(e, polar_tag)] = roiA
+        roiB_cache[(e, polar_tag)] = roiB
+
+    areaA_cache = {k: mask_area(v, v) for k, v in roiA_cache.items()}
+    areaB_cache = {k: mask_area(v, v) for k, v in roiB_cache.items()}
+
+    M = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+
+    tasks = []
+    for i, e1 in enumerate(ecc_bins):
+        for j, e2 in enumerate(ecc_bins):
+            tasks.append(
+                (
+                    i,
+                    j,
+                    e1,
+                    e2,
+                    roiA_cache,
+                    roiB_cache,
+                    areaA_cache,
+                    areaB_cache,
+                    tract_tck,
+                    polar_bins,
+                    outdir,
+                    visual_area_a,
+                    visual_area_b,
+                    ends_only,
+                    roi_order,
+                )
+            )
+    results=parallel_map(_compute_ecc_matrix_cell_precomputed, tasks,n_jobs)
+    for i, j, total_density in results:
+        M[i, j] = total_density
+
+    np.savetxt(outdir / "matrix.csv", M, delimiter=",", fmt="%.6f")
+
+    cmap = resolve_cmap(color_map)
+    plot_matrix(
+        M,
+        f"Retinotopic connectivity {visual_area_a}→{visual_area_b}",
+        outdir / "matrix",
+        ecc_bins,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        log_scale=log_scale,
+    )
+
+    return M
 
 def run_single_subject_matrix(
     tract_tck: Path,
@@ -963,7 +1166,7 @@ def run_single_subject_matrix(
      # --- global visual-area mode ---
     if areas_global:
         if area_matrix_method == "connectome":
-            run_areas_connectome(
+           M = run_areas_connectome(
                 tract_tck=tract_tck,
                 varea_map=varea_map,
                 outdir=outdir / "areas_connectome",
@@ -974,7 +1177,7 @@ def run_single_subject_matrix(
                 n_jobs=n_jobs,
             )
         elif area_matrix_method == "pairwise":
-            run_areas_pairwise(
+            M = run_areas_pairwise(
                 tract_tck=tract_tck,
                 varea_map=varea_map,
                 outdir=outdir / "areas_pairwise",
@@ -993,11 +1196,11 @@ def run_single_subject_matrix(
                 f"Unknown area_matrix_method '{area_matrix_method}'. "
                 f"Valid options are: 'connectome', 'pairwise'."
             )
-        return
+        return {("all", "all"): M} 
     # --- areas_per_bin mode ---
     if areas_per_bin:
         if area_matrix_method == "connectome":
-            run_areas_per_bin_connectome(
+            mat_dict = run_areas_per_bin_connectome(
                 tract_tck=tract_tck,
                 ecc_map=ecc_map,
                 polar_map=polar_map,
@@ -1013,7 +1216,7 @@ def run_single_subject_matrix(
                 n_jobs=n_jobs,
             )
         elif area_matrix_method == "pairwise":
-            run_areas_per_bin_pairwise(
+            mat_dict = run_areas_per_bin_pairwise(
                 tract_tck=tract_tck,
                 ecc_map=ecc_map,
                 polar_map=polar_map,
@@ -1034,61 +1237,25 @@ def run_single_subject_matrix(
                 f"Unknown area_matrix_method '{area_matrix_method}'. "
                 f"Valid options are: 'connectome', 'pairwise'."
             )
-        return
+        return mat_dict
 
-    roi_dir = outdir / "ROIs"
-    roi_dir.mkdir(exist_ok=True)
-
-    # area masks
-    areaA_mask = extract_visual_area_mask(varea_map, visual_area_a, roi_dir / f"{visual_area_a}.nii.gz")
-    areaB_mask = extract_visual_area_mask(varea_map, visual_area_b, roi_dir / f"{visual_area_b}.nii.gz")
-
-    M = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
-
-    for i, e1 in enumerate(ecc_bins):
-        for j, e2 in enumerate(ecc_bins):
-            total_density = 0.0
-
-            for polar in polar_bins:
-                if polar.lower() == "all":
-                    roi1_tmp = make_subject_patch_mask(ecc_map, None, e1, None, roi_dir / "ecc")
-                    roi2_tmp = make_subject_patch_mask(ecc_map, None, e2, None, roi_dir / "ecc")
-                    polar_tag = "all"
-                else:
-                    roi1_tmp = make_subject_patch_mask(ecc_map, polar_map, e1, polar, roi_dir / "ecc_polar")
-                    roi2_tmp = make_subject_patch_mask(ecc_map, polar_map, e2, polar, roi_dir / "ecc_polar")
-                    polar_tag = polar
-
-                roi1 = intersect_masks(roi1_tmp, areaA_mask, roi_dir / "intersections" / f"{visual_area_a}_ecc{e1}_polar{polar_tag}.nii.gz")
-                roi2 = intersect_masks(roi2_tmp, areaB_mask, roi_dir / "intersections" / f"{visual_area_b}_ecc{e2}_polar{polar_tag}.nii.gz")
-
-                tck_out = outdir / "tcks" / f"{visual_area_a}_{visual_area_b}_{e1}_{e2}_polar{polar_tag}.tck"
-                if not tck_out.exists():
-                    count = run_tckedit(tract_tck, roi1, roi2, tck_out, ends_only=ends_only, roi_order=roi_order)
-                else:
-                    try:
-                        count = int(subprocess.check_output(["tckinfo", str(tck_out), "-count"]).decode().split()[-1])
-                    except Exception:
-                        count = 0
-
-                a1 = mask_area(roi1, roi1)
-                a2 = mask_area(roi2, roi2)
-                area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
-                density = (count / area) if area > 0 else 0.0
-                total_density += density
-
-            M[i, j] = total_density
-
-    np.savetxt(outdir / "matrix.csv", M, delimiter=",", fmt="%.6f")
-    plot_matrix(
-        M,
-        f"Retinotopic connectivity {visual_area_a}→{visual_area_b}",
-        outdir / "matrix",
-        ecc_bins,
-        cmap=color_map,
+    M = run_ecc_matrix_pairwise(
+        tract_tck=tract_tck,
+        ecc_map=ecc_map,
+        polar_map=polar_map,
+        varea_map=varea_map,
+        ecc_bins=ecc_bins,
+        polar_bins=polar_bins,
+        visual_area_a=visual_area_a,
+        visual_area_b=visual_area_b,
+        outdir=outdir,
+        ends_only=ends_only,
+        roi_order=roi_order,
+        color_map=color_map,
+        log_scale=log_scale,
         vmin=vmin,
         vmax=vmax,
-        log_scale=log_scale,
+        n_jobs=n_jobs,
     )
 
     if make_dva_summary:
@@ -1107,3 +1274,4 @@ def run_single_subject_matrix(
 
     if fit_gaussian:
         run_all_gaussian_fitting(M, ecc_bins, outdir / "gaussian_fits", fit_truncated_gaussian_normalized)
+    return {("all", "all"): M}
