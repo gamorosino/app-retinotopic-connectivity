@@ -41,30 +41,48 @@ def plot_dva_bar(
     base_height: float = 4,
     y_lim=None,
     fontsize=12,
-    y_decimals=3
-    ):
+    y_decimals=3,
+):
     """
     Bar plot of discrete DVA-distance connectivity with SEM error bars.
+
+    If shells 0..5 exist, the last bar collapses all shells >= 6 into "≥6 DVA".
+    If fewer shells exist, plot only the available shells.
     """
 
-    labels = [
-        "same DVA", "±1 DVA", "±2 DVA", "±3 DVA",
-        "±4 DVA", "±5 DVA", "≥6 DVA"
-    ]
+    available_shells = sorted(shell_vals.keys())
+    if len(available_shells) == 0:
+        raise ValueError("shell_vals is empty")
 
-    # --------------------------------------------------------
-    # Compute means + SEMs
-    # --------------------------------------------------------
-    means = [shell_vals[k].mean() for k in range(6)]
-    sems  = [shell_vals[k].std() / np.sqrt(len(shell_vals[k])) for k in range(6)]
+    means = []
+    sems = []
+    labels = []
 
-    far_vals = np.concatenate([v for k, v in shell_vals.items() if k >= 6])
-    means.append(far_vals.mean())
-    sems.append(far_vals.std() / np.sqrt(len(far_vals)))
+    # standard case: enough shells to group >=6
+    if max(available_shells) >= 6:
+        for k in range(6):
+            vals = shell_vals.get(k, np.array([]))
+            if vals.size == 0:
+                means.append(0.0)
+                sems.append(0.0)
+            else:
+                means.append(vals.mean())
+                sems.append(vals.std() / np.sqrt(len(vals)))
+            labels.append("same DVA" if k == 0 else f"±{k} DVA")
 
-    # --------------------------------------------------------
-    # Shrink control
-    # --------------------------------------------------------
+        far_vals = np.concatenate([v for k, v in shell_vals.items() if k >= 6])
+        means.append(far_vals.mean() if far_vals.size > 0 else 0.0)
+        sems.append(far_vals.std() / np.sqrt(len(far_vals)) if far_vals.size > 0 else 0.0)
+        labels.append("≥6 DVA")
+
+    # small matrices: only plot what exists
+    else:
+        for k in available_shells:
+            vals = shell_vals[k]
+            means.append(vals.mean() if vals.size > 0 else 0.0)
+            sems.append(vals.std() / np.sqrt(len(vals)) if vals.size > 0 else 0.0)
+            labels.append("same DVA" if k == 0 else f"±{k} DVA")
+
     shrink = bar_x_dim / 100.0
     shrink = np.clip(shrink, 0.6, 1.2)
 
@@ -73,16 +91,13 @@ def plot_dva_bar(
     bar_w = 0.65
     x = np.arange(len(means)) * shrink
 
-    # --------------------------------------------------------
-    # Colormap
-    # --------------------------------------------------------
     base_cmap = cm.hot
     trunc_cmap = colors.LinearSegmentedColormap.from_list(
         "hot_truncated",
         base_cmap(np.linspace(0.0, 0.85, 256))
     )
 
-    norm = colors.Normalize(vmin=min(means), vmax=max(means))
+    norm = colors.Normalize(vmin=min(means), vmax=max(means) if max(means) > min(means) else min(means) + 1e-12)
     bar_colors = list(trunc_cmap(norm(means)))
 
     def lighten(color, amount=0.35):
@@ -94,12 +109,11 @@ def plot_dva_bar(
             a,
         )
 
-    bar_colors[0] = lighten(bar_colors[0])
-    bar_colors[1] = lighten(bar_colors[1])
+    if len(bar_colors) > 0:
+        bar_colors[0] = lighten(bar_colors[0])
+    if len(bar_colors) > 1:
+        bar_colors[1] = lighten(bar_colors[1])
 
-    # --------------------------------------------------------
-    # Plot
-    # --------------------------------------------------------
     plt.figure(figsize=(fig_w, fig_h))
 
     plt.bar(
@@ -118,8 +132,9 @@ def plot_dva_bar(
     if y_lim is not None:
         ymin, ymax = y_lim
     else:
+        ymax = max(np.array(means) + np.array(sems)) if len(means) > 0 else 1.0
         ymin = 0
-        ymax = max(np.array(means) + np.array(sems)) * 1.05
+        ymax = ymax * 1.05 if ymax > 0 else 1.0
 
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=30)
@@ -137,13 +152,11 @@ def plot_dva_bar(
     )
 
     plt.ylabel("Mean streamline density")
-
     plt.tight_layout()
     plt.savefig(out_png, dpi=300)
     plt.close()
 
     print(f"✓ Saved bar plot → {out_png}")
-
 
 # ============================================================
 # CLI
