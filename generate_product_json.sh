@@ -16,15 +16,15 @@ mkdir -p qa/previews
 qa_entries=()
 
 while IFS= read -r -d '' image; do
-    base="$(basename "$image" .png)"
-    jpg="qa/previews/${base}.jpg"
+    #base="$(basename "$image" .png)"
+    #jpg="qa/previews/${base}.jpg"
 
-    convert "$image" -resize 50% -trim -quality 90 "$jpg"
+    #convert "$image" -resize 50% -trim -quality 90 "$jpg"
 
     qa_entry="{
         \"type\": \"image/jpg\",
         \"name\": \"$base\",
-        \"base64\": \"$(base64 -w 0 "$jpg")\"
+        \"base64\": \"$(base64 -w 0 "$image")\"
     }"
 
     qa_entries+=("$qa_entry")
