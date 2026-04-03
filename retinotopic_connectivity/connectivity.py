@@ -332,6 +332,14 @@ def make_subject_patch_mask(
         return out
 
     ecc_img = nib.load(str(ecc_map))
+    ecc_data = ecc_img.get_fdata()
+    
+    print(
+        f"[DEBUG] ecc_map: {ecc_map}\n"
+        f"        shape={ecc_data.shape}, ndim={ecc_data.ndim}, dtype={ecc_data.dtype}\n"
+        f"        zooms={ecc_img.header.get_zooms()}"
+    )
+        
     ecc_data = np.squeeze(ecc_img.get_fdata())
     
     if ecc_data.ndim != 3:
