@@ -12,20 +12,21 @@ fi
 
 qa_entries=()
 
-while IFS= read -r -d '' image; do
-    base="$(basename "$image" .png)"
+for image in ./output/*.png; do
+    if [ -f "$image" ]; then
+        base=$(basename "$image" .png)
 
-    qa_entry="$(cat <<EOF
+        qa_entry=$(cat <<EOF
 {
-    "type": "image/png",
-    "name": "$base",
-    "base64": "$(base64 -w 0 "$image")"
+  "type": "image/png",
+  "name": "$base",
+  "base64": "$(base64 -w 0 "$image")"
 }
 EOF
-)"
-    qa_entries+=("$qa_entry")
-
-done < <(find ./output -type f -name "*.png" -print0 | sort -z)
+)
+        qa_entries+=("$qa_entry")
+    fi
+done
 
 if [ ${#qa_entries[@]} -eq 0 ]; then
     brainlife_json='{
@@ -38,7 +39,7 @@ fi
 
 cat << EOF > product.json
 {
-    "datatype_tags": [${datatype_tags_str}],
-    "brainlife": [${brainlife_json}]
+  "datatype_tags": [],
+  "brainlife": [${brainlife_json}]
 }
 EOF
