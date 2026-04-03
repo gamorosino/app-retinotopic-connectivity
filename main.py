@@ -143,11 +143,25 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
-    if areas_per_bin:
+    # color handling
+    if mode == "area_by_area" and not is_global_mode:
         color_map = resolve_area_bin_colors(color_map, len(ecc_bins))
     else:
         if color_map == "":
             color_map = "hot"
+        else:
+            try:
+                color_map = plt.get_cmap(color_map)
+            except ValueError:
+                # otherwise try as a single color
+                try:
+                    to_rgb(color_map)
+                    color_map = make_smooth_colormap(color_map, name=f"custom_{color_map}")
+                except ValueError:
+                    raise ValueError(
+                        f"'{color_map}' is neither a valid matplotlib colormap name "
+                        f"nor a valid color."
+                    )
             
     n_jobs = int(_get(cfg, "n_jobs", -1))
     n_jobs = resolve_n_jobs(int(n_jobs))
