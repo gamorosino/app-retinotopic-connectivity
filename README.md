@@ -1,6 +1,6 @@
 # Retinotopic Connectivity Matrix (app-retinotopic-connectivity)
 
-`app-retinotopic-connectivity` computes **single-subject retinotopic structural connectivity matrices** using a tractogram (`.tck`) and pRF-derived volumetric maps.
+`app-retinotopic-connectivity` computes **retinotopic structural connectivity matrices** using a tractogram (`.tck`) and pRF-derived volumetric maps.
 
 ---
 
