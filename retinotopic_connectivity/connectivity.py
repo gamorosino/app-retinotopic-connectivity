@@ -42,6 +42,20 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+def normalize_tag(x):
+    if x is None:
+        return "all"
+    x = str(x)
+    return "all" if x.lower() == "all" else x
+
+def parallel_map(func, tasks, n_jobs):
+    if n_jobs == 1:
+        return [func(t) for t in tasks]
+    chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
+    with ProcessPoolExecutor(max_workers=n_jobs) as ex:
+        return list(ex.map(func, tasks, chunksize=chunksize))
+
+
 def _build_roi_pair(task):
     (
         e, polar,
@@ -51,9 +65,9 @@ def _build_roi_pair(task):
         visual_area_a, visual_area_b
     ) = task
 
-    polar_tag = "all" if polar.lower() == "all" else polar
+    polar_tag = normalize_tag(polar)
 
-    if polar.lower() == "all":
+    if polar_tag == "all":
         roi_tmp = make_subject_patch_mask(ecc_map, None, e, None, roi_dir / "ecc")
     else:
         roi_tmp = make_subject_patch_mask(ecc_map, polar_map, e, polar, roi_dir / "ecc_polar")
@@ -85,7 +99,7 @@ def _compute_ecc_matrix_cell_precomputed(task):
     total_density = 0.0
 
     for polar in polar_bins:
-        polar_tag = "all" if polar.lower() == "all" else polar
+        polar_tag = normalize_tag(polar)
 
         roi1 = roiA_cache[(e1, polar_tag)]
         roi2 = roiB_cache[(e2, polar_tag)]
@@ -689,7 +703,7 @@ def run_areas_per_bin_connectome(
 
     if len(color_map_list) != len(ecc_bins):
         raise ValueError("Number of colors must match number of ecc bins")
-    
+    mat_dict={}
     for idx, ecc in enumerate(ecc_bins):
         cmap = color_map_list[idx]
 
@@ -739,7 +753,9 @@ def run_areas_per_bin_connectome(
                 title = f"Area connectivity  ecc {ecc_label}°  polar {polar_label}°"
             else:
                 title = f"Area connectivity  ecc {ecc_label}°"
-
+            polar_tag = normalize_tag(polar)
+            ecc_tag = normalize_tag(ecc)     
+            mat_dict[ecc_tag,polar_tag]=mat
             plot_area_matrix(
                 mat,
                 title,
@@ -750,7 +766,7 @@ def run_areas_per_bin_connectome(
                 vmax=vmax,
                 log_scale=log_scale,
             )
-
+    return mat_dict
 
 def run_areas_per_bin_pairwise(
     tract_tck: Path,
@@ -806,7 +822,7 @@ def run_areas_per_bin_pairwise(
     ] if color_map else [plt.get_cmap("viridis")] * len(ecc_bins)
 
     n_jobs = max(1, int(n_jobs))
-
+    mat_dict={}
     for idx, ecc in enumerate(ecc_bins):
         cmap = color_map_list[idx]
 
@@ -853,14 +869,7 @@ def run_areas_per_bin_pairwise(
                     tasks.append(
                         (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
                     )
-            
-            if n_jobs == 1:
-                results = [_compute_area_pair_density(task) for task in tasks]
-            else:
-                chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
-                with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-                    results = list(ex.map(_compute_area_pair_density, tasks, chunksize=chunksize))
-            
+            results = parallel_map(_compute_area_pair_density, tasks, n_jobs)
             for i, j, density in results:
                 M[i, j] = density
                 if symmetric:
@@ -875,7 +884,9 @@ def run_areas_per_bin_pairwise(
                 title = f"Area connectivity  ecc {ecc_label}°  polar {polar_label}°"
             else:
                 title = f"Area connectivity  ecc {ecc_label}°"
-
+            polar_tag = normalize_tag(polar)
+            ecc_tag = normalize_tag(ecc)     
+            mat_dict[ecc_tag,polar_tag]=M
             plot_area_matrix(
                 M,
                 title,
@@ -886,7 +897,8 @@ def run_areas_per_bin_pairwise(
                 vmax=vmax,
                 log_scale=log_scale,
             )
-
+    return mat_dict
+    
 def run_areas_connectome(
     tract_tck: Path,
     varea_map: Path,
@@ -989,14 +1001,7 @@ def run_areas_pairwise(
             tasks.append(
                 (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
             )
-
-    if n_jobs == 1:
-        results = [_compute_area_pair_density(task) for task in tasks]
-    else:
-        chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
-        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-            results = list(ex.map(_compute_area_pair_density, tasks, chunksize=chunksize))
-
+    results = parallel_map(_compute_area_pair_density, tasks, n_jobs)
     for i, j, density in results:
         M[i, j] = density
         if symmetric:
@@ -1076,16 +1081,7 @@ def run_ecc_matrix_pairwise(
         for e in ecc_bins
         for polar in polar_bins
     ]
-
-    if n_jobs == 1:
-        results_roi = [_build_roi_pair(t) for t in tasks_roi]
-    else:
-        chunksize_roi = max(1, len(tasks_roi) // max(1, n_jobs * 4))
-        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-            results_roi = list(
-                ex.map(_build_roi_pair, tasks_roi, chunksize=chunksize_roi)
-            )
-
+    results_roi=parallel_map(_build_roi_pair, tasks_roi,n_jobs)
     roiA_cache = {}
     roiB_cache = {}
 
@@ -1120,16 +1116,7 @@ def run_ecc_matrix_pairwise(
                     roi_order,
                 )
             )
-
-    if n_jobs == 1:
-        results = [_compute_ecc_matrix_cell_precomputed(task) for task in tasks]
-    else:
-        chunksize = max(1, len(tasks) // max(1, n_jobs * 4))
-        with ProcessPoolExecutor(max_workers=n_jobs) as ex:
-            results = list(
-                ex.map(_compute_ecc_matrix_cell_precomputed, tasks, chunksize=chunksize)
-            )
-
+    results=parallel_map(_compute_ecc_matrix_cell_precomputed, tasks,n_jobs)
     for i, j, total_density in results:
         M[i, j] = total_density
 
@@ -1179,7 +1166,7 @@ def run_single_subject_matrix(
      # --- global visual-area mode ---
     if areas_global:
         if area_matrix_method == "connectome":
-            run_areas_connectome(
+           M = run_areas_connectome(
                 tract_tck=tract_tck,
                 varea_map=varea_map,
                 outdir=outdir / "areas_connectome",
@@ -1190,7 +1177,7 @@ def run_single_subject_matrix(
                 n_jobs=n_jobs,
             )
         elif area_matrix_method == "pairwise":
-            run_areas_pairwise(
+            M = run_areas_pairwise(
                 tract_tck=tract_tck,
                 varea_map=varea_map,
                 outdir=outdir / "areas_pairwise",
@@ -1209,11 +1196,11 @@ def run_single_subject_matrix(
                 f"Unknown area_matrix_method '{area_matrix_method}'. "
                 f"Valid options are: 'connectome', 'pairwise'."
             )
-        return
+        return {("all", "all"): M} 
     # --- areas_per_bin mode ---
     if areas_per_bin:
         if area_matrix_method == "connectome":
-            run_areas_per_bin_connectome(
+            mat_dict = run_areas_per_bin_connectome(
                 tract_tck=tract_tck,
                 ecc_map=ecc_map,
                 polar_map=polar_map,
@@ -1229,7 +1216,7 @@ def run_single_subject_matrix(
                 n_jobs=n_jobs,
             )
         elif area_matrix_method == "pairwise":
-            run_areas_per_bin_pairwise(
+            mat_dict = run_areas_per_bin_pairwise(
                 tract_tck=tract_tck,
                 ecc_map=ecc_map,
                 polar_map=polar_map,
@@ -1250,7 +1237,7 @@ def run_single_subject_matrix(
                 f"Unknown area_matrix_method '{area_matrix_method}'. "
                 f"Valid options are: 'connectome', 'pairwise'."
             )
-        return
+        return mat_dict
 
     M = run_ecc_matrix_pairwise(
         tract_tck=tract_tck,
@@ -1287,3 +1274,4 @@ def run_single_subject_matrix(
 
     if fit_gaussian:
         run_all_gaussian_fitting(M, ecc_bins, outdir / "gaussian_fits", fit_truncated_gaussian_normalized)
+    return {("all", "all"): M}
