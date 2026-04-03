@@ -9,23 +9,30 @@ datatype_tags_str=""
 if [ ${#datatype_tags[@]} -gt 0 ]; then
     datatype_tags_str=$(join_by , "${datatype_tags[@]}")
 fi
-
 qa_entries=()
 
-for image in $(find ./output -name "*.png"); do
-    base=$(basename "$image" .png)
+echo "==== DEBUG: scanning for images ===="
+images=$(find ./output -name "*.png")
 
-    qa_entry=$(cat <<EOF
-{
+if [ -z "$images" ]; then
+    echo "No PNG images found"
+else
+    for image in $images; do
+        echo "Processing image: $image"
+
+        base=$(basename "$image" .png)
+
+        entry=$(printf '{
   "type": "image/png",
-  "name": "$base",
-  "base64": "$(base64 -w 0 "$image")"
-}
-EOF
-)
+  "name": "%s",
+  "base64": "%s"
+}' "$base" "$(base64 -w 0 "$image")")
 
-    qa_entries+=("$qa_entry")
-done
+        qa_entries+=("$entry")
+    done
+fi
+
+echo "==== DEBUG: number of entries: ${#qa_entries[@]} ===="
 
 if [ ${#qa_entries[@]} -eq 0 ]; then
     brainlife_json='{
@@ -35,6 +42,9 @@ if [ ${#qa_entries[@]} -eq 0 ]; then
 else
     brainlife_json=$(printf '%s\n' "${qa_entries[@]}" | paste -sd, -)
 fi
+
+echo "==== DEBUG: final JSON chunk ===="
+echo "$brainlife_json"
 
 cat << EOF > product.json
 {
