@@ -22,7 +22,7 @@ while IFS= read -r -d '' image; do
     #convert "$image" -resize 50% -trim -quality 90 "$jpg"
 
     qa_entry="{
-        \"type\": \"image/jpg\",
+        \"type\": \"image/png\",
         \"name\": \"$base\",
         \"base64\": \"$(base64 -w 0 "$image")\"
     }"
