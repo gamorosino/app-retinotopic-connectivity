@@ -86,7 +86,7 @@ def _build_roi_pair(task):
 
     return (e, polar_tag, roiA, roiB)
 
-def _compute_ecc_matrix_cell_precomputed(task):
+def _compute_bin_by_bin_matrix_cell_precomputed(task):
     (
         i, j, e1, e2,
         roiA_cache, roiB_cache,
@@ -660,7 +660,7 @@ def make_smooth_colormap(color, name="custom", n_colors=256, light_mix=0.9, dark
 
     return cmap
 
-def run_areas_per_bin_connectome(
+def run_areas_by_areas_connectome(
     tract_tck: Path,
     ecc_map: Path,
     polar_map: Optional[Path],
@@ -684,10 +684,10 @@ def run_areas_per_bin_connectome(
       3. filter streamlines so both endpoints lie within the mask
       4. run tck2connectome -assignment_end_voxels
 
-    Outputs are stored under: outdir/areas_per_bin_connectome/
+    Outputs are stored under: outdir/areas_by_areas_connectome/
     """
     n_areas = len(AREA_LABELS)
-    ape_dir = outdir / "areas_per_bin_connectome"
+    ape_dir = outdir / "areas_by_areas_connectome"
     ape_dir.mkdir(parents=True, exist_ok=True)
 
     roi_dir = ape_dir / "ROIs"
@@ -768,7 +768,7 @@ def run_areas_per_bin_connectome(
             )
     return mat_dict
 
-def run_areas_per_bin_pairwise(
+def run_areas_by_areas_pairwise(
     tract_tck: Path,
     ecc_map: Path,
     polar_map: Optional[Path],
@@ -796,10 +796,10 @@ def run_areas_per_bin_pairwise(
          using run_tckedit(..., ends_only=..., roi_order=...)
       4. build the 12x12 density matrix manually
 
-    Outputs are stored under: outdir/areas_per_bin_pairwise/
+    Outputs are stored under: outdir/areas_by_areas_pairwise/
     """
     n_areas = len(AREA_LABELS)
-    ape_dir = outdir / "areas_per_bin_pairwise"
+    ape_dir = outdir / "areas_by_areas_pairwise"
     ape_dir.mkdir(parents=True, exist_ok=True)
 
     roi_dir = ape_dir / "ROIs"
@@ -820,14 +820,16 @@ def run_areas_per_bin_pairwise(
         resolve_cmap(c.strip())
         for c in color_map.split(",")
     ] if color_map else [plt.get_cmap("viridis")] * len(ecc_bins)
-
+    if len(color_map_list) != len(ecc_bins):
+        raise ValueError("Number of colors must match number of ecc bins")
     n_jobs = max(1, int(n_jobs))
     mat_dict={}
     for idx, ecc in enumerate(ecc_bins):
         cmap = color_map_list[idx]
 
         for polar in polar_bins:
-            use_polar = polar.lower() != "all"
+            polar_tag = normalize_tag(polar)
+            use_polar = polar_tag != "all"
 
             if use_polar:
                 combined_mask = make_subject_patch_mask(
@@ -1024,7 +1026,7 @@ def run_areas_pairwise(
     )
     return M
 
-def run_ecc_matrix_pairwise(
+def run_bin_by_bin_matrix_pairwise(
     tract_tck: Path,
     ecc_map: Path,
     polar_map: Path,
@@ -1116,7 +1118,7 @@ def run_ecc_matrix_pairwise(
                     roi_order,
                 )
             )
-    results=parallel_map(_compute_ecc_matrix_cell_precomputed, tasks,n_jobs)
+    results=parallel_map(_compute_bin_by_bin_matrix_cell_precomputed, tasks,n_jobs)
     for i, j, total_density in results:
         M[i, j] = total_density
 
@@ -1155,123 +1157,151 @@ def run_single_subject_matrix(
     fit_gaussian: bool,
     fit_truncated_gaussian_normalized: bool,
     make_dva_summary: bool,
-    areas_per_bin: bool = False,
+    mode: str = "bin_by_bin",
     area_matrix_method: str = "connectome",
     areas_global: bool = False,
     n_jobs: int = 1,
 ):
+
+    mode = str(mode).strip().lower()
+    
+    if mode not in {"area_by_area", "bin_by_bin"}:
+        raise ValueError(
+            f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
+        )
+    
+    ecc_all = (len(ecc_bins) == 1 and normalize_tag(ecc_bins[0]) == "all")
+    polar_all = (len(polar_bins) == 1 and normalize_tag(polar_bins[0]) == "all")
+    
+    if mode == "bin_by_bin" and areas_global:
+        raise ValueError(
+            "Invalid configuration: 'areas_global=True' is only valid when mode='area_by_area'."
+        )
+    
+    if mode == "bin_by_bin" and ecc_all and polar_all:
+        raise ValueError(
+            "Invalid configuration: mode='bin_by_bin' cannot be used with ecc_bins='all' "
+            "and polar_bins='all'. Use mode='area_by_area' with areas_global=True instead."
+        )
+    
     outdir.mkdir(parents=True, exist_ok=True)
 
 
+
+    # --- areas_by_areas mode ---
+    if mode == "area_by_area":
+
      # --- global visual-area mode ---
-    if areas_global:
-        if area_matrix_method == "connectome":
-           M = run_areas_connectome(
-                tract_tck=tract_tck,
-                varea_map=varea_map,
-                outdir=outdir / "areas_connectome",
-                color_map=color_map,
-                log_scale=log_scale,
-                vmin=vmin,
-                vmax=vmax,
-                n_jobs=n_jobs,
-            )
-        elif area_matrix_method == "pairwise":
-            M = run_areas_pairwise(
-                tract_tck=tract_tck,
-                varea_map=varea_map,
-                outdir=outdir / "areas_pairwise",
-                ends_only=ends_only,
-                roi_order=roi_order,
-                color_map=color_map,
-                log_scale=log_scale,
-                vmin=vmin,
-                vmax=vmax,
-                zero_diagonal=True,
-                symmetric=True,
-                n_jobs=n_jobs,
-            )
+        if areas_global:
+            if area_matrix_method == "connectome":
+               M = run_areas_connectome(
+                    tract_tck=tract_tck,
+                    varea_map=varea_map,
+                    outdir=outdir / "areas_connectome",
+                    color_map=color_map,
+                    log_scale=log_scale,
+                    vmin=vmin,
+                    vmax=vmax,
+                    n_jobs=n_jobs,
+                )
+            elif area_matrix_method == "pairwise":
+                M = run_areas_pairwise(
+                    tract_tck=tract_tck,
+                    varea_map=varea_map,
+                    outdir=outdir / "areas_pairwise",
+                    ends_only=ends_only,
+                    roi_order=roi_order,
+                    color_map=color_map,
+                    log_scale=log_scale,
+                    vmin=vmin,
+                    vmax=vmax,
+                    zero_diagonal=True,
+                    symmetric=True,
+                    n_jobs=n_jobs,
+                )
+            else:
+                raise ValueError(
+                    f"Unknown area_matrix_method '{area_matrix_method}'. "
+                    f"Valid options are: 'connectome', 'pairwise'."
+                )
+            return {("all", "all"): M} 
         else:
-            raise ValueError(
-                f"Unknown area_matrix_method '{area_matrix_method}'. "
-                f"Valid options are: 'connectome', 'pairwise'."
-            )
-        return {("all", "all"): M} 
-    # --- areas_per_bin mode ---
-    if areas_per_bin:
-        if area_matrix_method == "connectome":
-            mat_dict = run_areas_per_bin_connectome(
-                tract_tck=tract_tck,
-                ecc_map=ecc_map,
-                polar_map=polar_map,
-                varea_map=varea_map,
-                ecc_bins=ecc_bins,
-                polar_bins=polar_bins,
-                outdir=outdir,
-                ends_only=ends_only,
-                color_map=color_map,
-                log_scale=log_scale,
-                vmin=vmin,
-                vmax=vmax,
-                n_jobs=n_jobs,
-            )
-        elif area_matrix_method == "pairwise":
-            mat_dict = run_areas_per_bin_pairwise(
-                tract_tck=tract_tck,
-                ecc_map=ecc_map,
-                polar_map=polar_map,
-                varea_map=varea_map,
-                ecc_bins=ecc_bins,
-                polar_bins=polar_bins,
-                outdir=outdir,
-                ends_only=ends_only,
-                roi_order=roi_order,
-                color_map=color_map,
-                log_scale=log_scale,
-                vmin=vmin,
-                vmax=vmax,
-                n_jobs=n_jobs 
-            )
-        else:
-            raise ValueError(
-                f"Unknown area_matrix_method '{area_matrix_method}'. "
-                f"Valid options are: 'connectome', 'pairwise'."
-            )
-        return mat_dict
-
-    M = run_ecc_matrix_pairwise(
-        tract_tck=tract_tck,
-        ecc_map=ecc_map,
-        polar_map=polar_map,
-        varea_map=varea_map,
-        ecc_bins=ecc_bins,
-        polar_bins=polar_bins,
-        visual_area_a=visual_area_a,
-        visual_area_b=visual_area_b,
-        outdir=outdir,
-        ends_only=ends_only,
-        roi_order=roi_order,
-        color_map=color_map,
-        log_scale=log_scale,
-        vmin=vmin,
-        vmax=vmax,
-        n_jobs=n_jobs,
-    )
-
-    if make_dva_summary:
-        dva_dir = outdir
-        dva_dir.mkdir(exist_ok=True)
-        shell_vals = compute_shell_vals(M)
-        plot_dva_bar(
-            shell_vals,
-            out_png=dva_dir / "dva_bar.png",
-            bar_x_dim=95,
-            base_width=4,
-            y_lim=None,
-            y_decimals=4,
+        
+    
+            
+            if area_matrix_method == "connectome":
+                mat_dict = run_areas_by_areas_connectome(
+                    tract_tck=tract_tck,
+                    ecc_map=ecc_map,
+                    polar_map=polar_map,
+                    varea_map=varea_map,
+                    ecc_bins=ecc_bins,
+                    polar_bins=polar_bins,
+                    outdir=outdir,
+                    ends_only=ends_only,
+                    color_map=color_map,
+                    log_scale=log_scale,
+                    vmin=vmin,
+                    vmax=vmax,
+                    n_jobs=n_jobs,
+                )
+            elif area_matrix_method == "pairwise":
+                mat_dict = run_areas_by_areas_pairwise(
+                    tract_tck=tract_tck,
+                    ecc_map=ecc_map,
+                    polar_map=polar_map,
+                    varea_map=varea_map,
+                    ecc_bins=ecc_bins,
+                    polar_bins=polar_bins,
+                    outdir=outdir,
+                    ends_only=ends_only,
+                    roi_order=roi_order,
+                    color_map=color_map,
+                    log_scale=log_scale,
+                    vmin=vmin,
+                    vmax=vmax,
+                    n_jobs=n_jobs 
+                )
+            else:
+                raise ValueError(
+                    f"Unknown area_matrix_method '{area_matrix_method}'. "
+                    f"Valid options are: 'connectome', 'pairwise'."
+                )
+            return mat_dict
+    elif mode == "bin_by_bin":
+        M = run_bin_by_bin_matrix_pairwise(
+            tract_tck=tract_tck,
+            ecc_map=ecc_map,
+            polar_map=polar_map,
+            varea_map=varea_map,
+            ecc_bins=ecc_bins,
+            polar_bins=polar_bins,
+            visual_area_a=visual_area_a,
+            visual_area_b=visual_area_b,
+            outdir=outdir,
+            ends_only=ends_only,
+            roi_order=roi_order,
+            color_map=color_map,
+            log_scale=log_scale,
+            vmin=vmin,
+            vmax=vmax,
+            n_jobs=n_jobs,
         )
-        plot_radial_shells(M, out_png=dva_dir / "dva_radial_shells.png")
-
-    if fit_gaussian:
-        run_all_gaussian_fitting(M, ecc_bins, outdir / "gaussian_fits", fit_truncated_gaussian_normalized)
-    return {("all", "all"): M}
+    
+        if make_dva_summary:
+            dva_dir = outdir
+            dva_dir.mkdir(exist_ok=True)
+            shell_vals = compute_shell_vals(M)
+            plot_dva_bar(
+                shell_vals,
+                out_png=dva_dir / "dva_bar.png",
+                bar_x_dim=95,
+                base_width=4,
+                y_lim=None,
+                y_decimals=4,
+            )
+            plot_radial_shells(M, out_png=dva_dir / "dva_radial_shells.png")
+    
+        if fit_gaussian:
+            run_all_gaussian_fitting(M, ecc_bins, outdir / "gaussian_fits", fit_truncated_gaussian_normalized)
+        return {("all", "all"): M}
