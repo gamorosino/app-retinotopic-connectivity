@@ -7,7 +7,7 @@ mkdir -p output
 
 # Helper to run inside your container+micromamba environment
 run_in_env() {
-  singularity exec -e docker://gamorosino/tract_align:latest \
+  singularity exec -e docker://gamorosino/tract_align:v1.0 \
     micromamba run -n tract_align "$@"
 }
 
