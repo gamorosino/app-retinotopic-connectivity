@@ -283,9 +283,16 @@ def intersect_masks(mask1: Path, mask2: Path, out_path: Path) -> Path:
 
 def subject_threshold_map(base_map: Path, low: float, high: float, var_type=None):
     img = nib.load(str(base_map))
-    data = img.get_fdata()
+    data = np.squeeze(img.get_fdata())
+
+    if data.ndim != 3:
+        raise ValueError(
+            f"Expected retinotopic map to be 3D after squeeze, got shape {data.shape} for '{base_map}'."
+        )
+
     if var_type == "angle":
         data = np.abs(data)
+
     mask = (data >= low) & (data <= high)
     return mask.astype(np.uint8), img
 
@@ -325,7 +332,12 @@ def make_subject_patch_mask(
         return out
 
     ecc_img = nib.load(str(ecc_map))
-    ecc_data = ecc_img.get_fdata()
+    ecc_data = np.squeeze(ecc_img.get_fdata())
+    
+    if ecc_data.ndim != 3:
+        raise ValueError(
+            f"Expected eccentricity map to be 3D after squeeze, got shape {ecc_data.shape} for '{ecc_map}'."
+        )
 
     # full mask
     if ecc_is_all and ang_is_all:
@@ -1084,7 +1096,7 @@ def run_bin_by_bin_matrix_pairwise(
         for e in ecc_bins
         for polar in polar_bins
     ]
-    results_roi = [_build_roi_pair(t) for t in tasks_roi]
+    results_roi = parallel_map(_build_roi_pair, tasks_roi, n_jobs)
     roiA_cache = {}
     roiB_cache = {}
 
