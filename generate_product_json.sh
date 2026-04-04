@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+input=$1
+output=$2
+
 datatype_tags=()
 
 function join_by { local d=$1; shift; echo -n "$1"; shift; printf "%s" "${@/#/$d}"; }
@@ -23,7 +26,7 @@ while IFS= read -r image; do
         "$(base64 -w 0 "$image")")
 
     qa_entries+=("$entry")
-done < <(find ./output -name "*.png" | sort)
+done < <(find ${input} -name "*.png" | sort)
 
 echo "==== DEBUG: number of entries: ${#qa_entries[@]} ===="
 
@@ -36,7 +39,7 @@ fi
 echo "==== DEBUG: final JSON chunk ===="
 echo "$brainlife_json"
 
-cat << EOF > product.json
+cat << EOF > ${output}
 {
   "datatype_tags": [],
   "brainlife": [${brainlife_json}]
