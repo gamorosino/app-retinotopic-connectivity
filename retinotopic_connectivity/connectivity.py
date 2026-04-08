@@ -8,7 +8,8 @@ import matplotlib.pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.ticker import FormatStrFormatter
 import matplotlib.colors as mcolors
-# vendored modules (placed at repo root)
+import json
+import shutil
 from utils import save_figure
 from fit_gaussian_connectivity import (
     fit_matrix_rows,
@@ -41,6 +42,149 @@ from concurrent.futures import ProcessPoolExecutor
 # Visual area labels (Benson-style)
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
+
+def init_output_layout(outdir: Path):
+    """
+    Final public layout:
+      outdir/
+        figures/
+          images.json
+          images/
+        matrices/
+          index.json
+          label.json
+          csv/
+        _work/
+          ... all intermediates ...
+
+    Returns a dict of useful paths.
+    """
+    figures_dir = outdir / "figures"
+    images_dir = figures_dir / "images"
+
+    matrices_dir = outdir / "matrices"
+    csv_dir = matrices_dir / "csv"
+
+    work_dir = outdir / "_work"
+
+    images_dir.mkdir(parents=True, exist_ok=True)
+    csv_dir.mkdir(parents=True, exist_ok=True)
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    return {
+        "figures_dir": figures_dir,
+        "images_dir": images_dir,
+        "matrices_dir": matrices_dir,
+        "csv_dir": csv_dir,
+        "work_dir": work_dir,
+    }
+
+
+def make_area_label_json():
+    labels = [{"name": "self-loop", "desc": "index(x,x) is the diagonal"}]
+    for i, area in enumerate(AREA_LABELS, start=1):
+        labels.append({
+            "name": area,
+            "label": area,
+            "voxel_value": i,
+        })
+    return labels
+
+
+def make_bin_label_json(ecc_bins: List[str]):
+    labels = [{"name": "self-loop", "desc": "index(x,x) is the diagonal"}]
+    for i, ecc in enumerate(ecc_bins, start=1):
+        labels.append({
+            "name": ecc,
+            "label": ecc,
+            "voxel_value": i,
+        })
+    return labels
+
+
+def _flatten_relpath(path: Path, root: Path) -> str:
+    """
+    Make exported filenames unique while preserving provenance.
+    Example:
+      gaussian_fits/gaussian_fit/params.csv
+      -> gaussian_fits__gaussian_fit__params.csv
+    """
+    rel = path.relative_to(root)
+    parts = list(rel.parts)
+    if len(parts) == 1:
+        return parts[0]
+
+    stem = "__".join(parts[:-1] + [Path(parts[-1]).stem])
+    suffix = Path(parts[-1]).suffix
+    return f"{stem}{suffix}"
+
+
+def export_artifacts_and_write_manifests(
+    work_root: Path,
+    outdir: Path,
+    label_entries: list,
+):
+    """
+    Move all exported PNG/JPG/SVG/GIF into figures/images/
+    Move all CSV into matrices/csv/
+    Then write:
+      figures/images.json
+      matrices/index.json
+      matrices/label.json
+
+    Intermediates such as .nii.gz, .tck remain in _work/.
+    """
+    layout = init_output_layout(outdir)
+    images_dir = layout["images_dir"]
+    csv_dir = layout["csv_dir"]
+    figures_dir = layout["figures_dir"]
+    matrices_dir = layout["matrices_dir"]
+
+    image_entries = []
+    matrix_entries = []
+
+    image_exts = {".png", ".jpg", ".jpeg", ".svg", ".gif"}
+
+    # Export all images
+    for p in sorted(work_root.rglob("*")):
+        if not p.is_file():
+            continue
+
+        suffix = p.suffix.lower()
+
+        if suffix in image_exts:
+            export_name = _flatten_relpath(p, work_root)
+            dst = images_dir / export_name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(p), str(dst))
+
+            image_entries.append({
+                "filename": f"images/{export_name}",
+                "name": Path(export_name).stem,
+                "desc": "Connectivity figure",
+            })
+
+        elif suffix == ".csv":
+            export_name = _flatten_relpath(p, work_root)
+            dst = csv_dir / export_name
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(p), str(dst))
+
+            matrix_entries.append({
+                "filename": export_name,
+                "unit": "streamline_density",
+                "name": Path(export_name).stem,
+                "desc": "Connectivity matrix",
+            })
+
+    with open(figures_dir / "images.json", "w") as f:
+        json.dump({"images": image_entries}, f, indent=2)
+
+    with open(matrices_dir / "index.json", "w") as f:
+        json.dump(matrix_entries, f, indent=2)
+
+    with open(matrices_dir / "label.json", "w") as f:
+        json.dump(label_entries, f, indent=2)
 
 def normalize_tag(x):
     if x is None:
@@ -1194,42 +1338,41 @@ def run_single_subject_matrix(
     areas_global: bool = False,
     n_jobs: int = 1,
 ):
-
     mode = str(mode).strip().lower()
-    
+
     if mode not in {"area_by_area", "bin_by_bin"}:
         raise ValueError(
             f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
         )
-    
+
     ecc_all = (len(ecc_bins) == 1 and normalize_tag(ecc_bins[0]) == "all")
     polar_all = (len(polar_bins) == 1 and normalize_tag(polar_bins[0]) == "all")
-    
+
     if mode == "bin_by_bin" and areas_global:
         raise ValueError(
             "Invalid configuration: 'areas_global=True' is only valid when mode='area_by_area'."
         )
-    
+
     if mode == "bin_by_bin" and ecc_all and polar_all:
         raise ValueError(
             "Invalid configuration: mode='bin_by_bin' cannot be used with ecc_bins='all' "
             "and polar_bins='all'. Use mode='area_by_area' with areas_global=True instead."
         )
-    
-    outdir.mkdir(parents=True, exist_ok=True)
 
+    layout = init_output_layout(outdir)
+    work_outdir = layout["work_dir"]
 
-
-    # --- areas_by_areas mode ---
+    # --------------------------------------------------
+    # area_by_area
+    # --------------------------------------------------
     if mode == "area_by_area":
 
-     # --- global visual-area mode ---
         if areas_global:
             if area_matrix_method == "connectome":
-               M = run_areas_connectome(
+                M = run_areas_connectome(
                     tract_tck=tract_tck,
                     varea_map=varea_map,
-                    outdir=outdir / "areas_connectome",
+                    outdir=work_outdir / "areas_connectome",
                     color_map=color_map,
                     log_scale=log_scale,
                     vmin=vmin,
@@ -1240,7 +1383,7 @@ def run_single_subject_matrix(
                 M = run_areas_pairwise(
                     tract_tck=tract_tck,
                     varea_map=varea_map,
-                    outdir=outdir / "areas_pairwise",
+                    outdir=work_outdir / "areas_pairwise",
                     ends_only=ends_only,
                     roi_order=roi_order,
                     color_map=color_map,
@@ -1256,11 +1399,15 @@ def run_single_subject_matrix(
                     f"Unknown area_matrix_method '{area_matrix_method}'. "
                     f"Valid options are: 'connectome', 'pairwise'."
                 )
-            return {("all", "all"): M} 
+
+            export_artifacts_and_write_manifests(
+                work_root=work_outdir,
+                outdir=outdir,
+                label_entries=make_area_label_json(),
+            )
+            return {("all", "all"): M}
+
         else:
-        
-    
-            
             if area_matrix_method == "connectome":
                 mat_dict = run_areas_by_areas_connectome(
                     tract_tck=tract_tck,
@@ -1269,7 +1416,7 @@ def run_single_subject_matrix(
                     varea_map=varea_map,
                     ecc_bins=ecc_bins,
                     polar_bins=polar_bins,
-                    outdir=outdir,
+                    outdir=work_outdir,
                     ends_only=ends_only,
                     color_map=color_map,
                     log_scale=log_scale,
@@ -1285,21 +1432,31 @@ def run_single_subject_matrix(
                     varea_map=varea_map,
                     ecc_bins=ecc_bins,
                     polar_bins=polar_bins,
-                    outdir=outdir,
+                    outdir=work_outdir,
                     ends_only=ends_only,
                     roi_order=roi_order,
                     color_map=color_map,
                     log_scale=log_scale,
                     vmin=vmin,
                     vmax=vmax,
-                    n_jobs=n_jobs 
+                    n_jobs=n_jobs,
                 )
             else:
                 raise ValueError(
                     f"Unknown area_matrix_method '{area_matrix_method}'. "
                     f"Valid options are: 'connectome', 'pairwise'."
                 )
+
+            export_artifacts_and_write_manifests(
+                work_root=work_outdir,
+                outdir=outdir,
+                label_entries=make_area_label_json(),
+            )
             return mat_dict
+
+    # --------------------------------------------------
+    # bin_by_bin
+    # --------------------------------------------------
     elif mode == "bin_by_bin":
         M = run_bin_by_bin_matrix_pairwise(
             tract_tck=tract_tck,
@@ -1310,7 +1467,7 @@ def run_single_subject_matrix(
             polar_bins=polar_bins,
             visual_area_a=visual_area_a,
             visual_area_b=visual_area_b,
-            outdir=outdir,
+            outdir=work_outdir,
             ends_only=ends_only,
             roi_order=roi_order,
             color_map=color_map,
@@ -1319,9 +1476,9 @@ def run_single_subject_matrix(
             vmax=vmax,
             n_jobs=n_jobs,
         )
-    
+
         if make_dva_summary:
-            dva_dir = outdir
+            dva_dir = work_outdir
             dva_dir.mkdir(exist_ok=True)
             shell_vals = compute_shell_vals(M)
             plot_dva_bar(
@@ -1333,7 +1490,19 @@ def run_single_subject_matrix(
                 y_decimals=4,
             )
             plot_radial_shells(M, out_png=dva_dir / "dva_radial_shells.png")
-    
+
         if fit_gaussian:
-            run_all_gaussian_fitting(M, ecc_bins, outdir / "gaussian_fits", fit_truncated_gaussian_normalized)
+            run_all_gaussian_fitting(
+                M,
+                ecc_bins,
+                work_outdir / "gaussian_fits",
+                fit_truncated_gaussian_normalized,
+            )
+
+        export_artifacts_and_write_manifests(
+            work_root=work_outdir,
+            outdir=outdir,
+            label_entries=make_bin_label_json(ecc_bins),
+        )
+
         return {("all", "all"): M}
