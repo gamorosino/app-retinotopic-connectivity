@@ -4,16 +4,13 @@
 
 This app computes **retinotopic structural connectivity matrices** from a tractogram and population receptive field (pRF) maps.
 
-The connectivity is derived from subject-specific **eccentricity**, **polar angle**, and **visual area** maps and quantified using streamline counts from an MRtrix tractogram.
+The connectivity is derived from  **eccentricity**, **polar angle**, and **visual area** maps and quantified using streamline counts from an MRtrix tractogram.
 
 ---
 
 # Author
 
-**Gabriele Amorosino**
-The University of Texas at Austin
-
-Email: [gabriele.amorosino@utexas.edu](mailto:gabriele.amorosino@utexas.edu)
+**Gabriele Amorosino** ([gabriele.amorosino@utexas.edu](mailto:gabriele.amorosino@utexas.edu))
 
 ---
 
@@ -49,12 +46,6 @@ input/
     ├── eccentricity.nii.gz
     ├── polarAngle.nii.gz
     └── varea.nii.gz
-```
-
-Optional (currently unused):
-
-```
-rfWidth.nii.gz
 ```
 
 ---
@@ -444,12 +435,8 @@ singularity exec -e \
 
 If you use this app in your research, please cite:
 
-Brainlife.io
-Hayashi, S. et al. (2024)
-Nature Methods 21(5): 809–813
+- Hayashi, S., ... & Pestilli, F. (2024). brainlife. io: A decentralized and open-source cloud platform to support neuroscience research. Nature methods, 21(5), 809-813.
 [https://doi.org/10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
 
-MRtrix3
-Tournier, J.-D. et al. (2019)
-NeuroImage 202
+- Tournier, J. D., Smith, R., Raffelt, D., Tabbara, R., Dhollander, T., Pietsch, M., ... & Connelly, A. (2019). MRtrix3: A fast, flexible and open software framework for medical image processing and visualisation. Neuroimage, 202, 116137.
 [https://doi.org/10.1016/j.neuroimage.2019.116137](https://doi.org/10.1016/j.neuroimage.2019.116137)
