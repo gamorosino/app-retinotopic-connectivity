@@ -45,8 +45,10 @@ AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2"
 
 def init_output_layout(outdir: Path):
     """
-    Final public layout:
-      outdir/
+    Public layout:
+      <parent_of_outdir>/
+        output/
+          _work/
         figures/
           images.json
           images/
@@ -54,15 +56,16 @@ def init_output_layout(outdir: Path):
           index.json
           label.json
           csv/
-        _work/
-          ... all intermediates ...
 
-    Returns a dict of useful paths.
+    Here, `outdir` is the internal working/output directory, and
+    figures/matrices are created next to it.
     """
-    figures_dir = outdir / "figures"
+    root_dir = outdir.parent
+
+    figures_dir = root_dir / "figures"
     images_dir = figures_dir / "images"
 
-    matrices_dir = outdir / "matrices"
+    matrices_dir = root_dir / "matrices"
     csv_dir = matrices_dir / "csv"
 
     work_dir = outdir / "_work"
@@ -72,13 +75,13 @@ def init_output_layout(outdir: Path):
     work_dir.mkdir(parents=True, exist_ok=True)
 
     return {
+        "root_dir": root_dir,
         "figures_dir": figures_dir,
         "images_dir": images_dir,
         "matrices_dir": matrices_dir,
         "csv_dir": csv_dir,
         "work_dir": work_dir,
     }
-
 
 def make_area_label_json():
     labels = [{"name": "self-loop", "desc": "index(x,x) is the diagonal"}]
