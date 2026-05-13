@@ -130,6 +130,18 @@ def main():
 
     mode = str(_get(cfg, "mode", "bin_by_bin")).strip().lower()
 
+    matrix_elements = str(
+        _get(cfg, "matrix_elements", "eccentricity")
+    ).strip().lower()
+    
+    valid_matrix_elements = {"eccentricity", "polar"}
+    
+    if matrix_elements not in valid_matrix_elements:
+        raise ValueError(
+            f"Invalid matrix_elements '{matrix_elements}'. "
+            f"Valid options are: {sorted(valid_matrix_elements)}"
+        )
+
     valid_modes = {"area_by_area", "bin_by_bin"}
     if mode not in valid_modes:
         raise ValueError(
@@ -188,6 +200,7 @@ def main():
         fit_truncated_gaussian_normalized=fit_trunc_norm,
         make_dva_summary=make_dva_summary,
         mode=mode,
+        matrix_elements=matrix_elements,
         area_matrix_method=area_matrix_method,
         n_jobs=n_jobs,
         areas_global=is_global_mode
