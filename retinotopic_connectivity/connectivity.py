@@ -189,6 +189,10 @@ def export_artifacts_and_write_manifests(
     with open(matrices_dir / "label.json", "w") as f:
         json.dump(label_entries, f, indent=2)
 
+def parse_bin_range(x: str):
+    x = str(x).replace("-", "_")
+    return map(float, x.split("_"))
+
 def normalize_tag(x):
     if x is None:
         return "all"
@@ -244,7 +248,7 @@ def _compute_bin_by_bin_matrix_cell_precomputed(task):
         ends_only, roi_order,
     ) = task
 
-    total_density = 0.0
+    polar_densities = {}
 
     for polar in polar_bins:
         polar_tag = normalize_tag(polar)
@@ -256,6 +260,7 @@ def _compute_bin_by_bin_matrix_cell_precomputed(task):
         a2 = areaB_cache[(e2, polar_tag)]
 
         if a1 == 0 or a2 == 0:
+            polar_densities[polar_tag] = 0.0
             continue
 
         tck_out = outdir / "tcks" / f"{visual_area_a}_{visual_area_b}_{e1}_{e2}_polar{polar_tag}.tck"
@@ -280,11 +285,10 @@ def _compute_bin_by_bin_matrix_cell_precomputed(task):
                 count = 0
 
         area = (a1 + a2) / 2.0 if (a1 > 0 and a2 > 0) else max(a1, a2)
-        density = (count / area) if area > 0 else 0.0
-        total_density += density
+        polar_densities[polar_tag] = (count / area) if area > 0 else 0.0
 
-    return i, j, total_density
-
+    return i, j, polar_densities
+    
 def resolve_cmap(color_map):
     """
     Normalize color_map into a valid matplotlib colormap or cmap name.
@@ -515,7 +519,7 @@ def make_subject_patch_mask(
     if ecc_is_all:
         ecc_mask = np.ones_like(np.squeeze(ecc_data), dtype=bool)
     else:
-        ecc_low, ecc_high = map(float, str(ecc_range).split("_"))
+        ecc_low, ecc_high = parse_bin_range(ecc_range)
         ecc_mask, _ = subject_threshold_map(ecc_map, ecc_low, ecc_high)
         ecc_mask = ecc_mask > 0
 
@@ -525,7 +529,7 @@ def make_subject_patch_mask(
     else:
         if ang_map is None:
             raise ValueError("ang_map is required when ang_range is not None/'all'")
-        ang_low, ang_high = map(float, str(ang_range).split("_"))
+        ang_low, ang_high = parse_bin_range(ang_range)
         ang_mask, _ = subject_threshold_map(ang_map, ang_low, ang_high, var_type="angle")
         ang_mask = ang_mask > 0
 
@@ -1273,7 +1277,12 @@ def run_bin_by_bin_matrix_pairwise(
     areaA_cache = {k: mask_area(v, v) for k, v in roiA_cache.items()}
     areaB_cache = {k: mask_area(v, v) for k, v in roiB_cache.items()}
 
-    M = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+    M_summary = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+
+    M_by_polar = {
+        normalize_tag(polar): np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+        for polar in polar_bins
+    }
 
     tasks = []
     for i, e1 in enumerate(ecc_bins):
@@ -1298,15 +1307,23 @@ def run_bin_by_bin_matrix_pairwise(
                 )
             )
     results=parallel_map(_compute_bin_by_bin_matrix_cell_precomputed, tasks,n_jobs)
-    for i, j, total_density in results:
-        M[i, j] = total_density
-
-    np.savetxt(outdir / "matrix.csv", M, delimiter=",", fmt="%.6f")
+    for i, j, polar_densities in results:
+        total_density = 0.0
+    
+        for polar_tag, density in polar_densities.items():
+            M_by_polar[polar_tag][i, j] = density
+            total_density += density
+    
+        M_summary[i, j] = total_density
 
     cmap = resolve_cmap(color_map)
+    
+    # summary matrix: summed across all polar bins
+    np.savetxt(outdir / "matrix.csv", M_summary, delimiter=",", fmt="%.6f")
+    
     plot_matrix(
-        M,
-        f"Retinotopic connectivity {visual_area_a}→{visual_area_b}",
+        M_summary,
+        f"Retinotopic connectivity {visual_area_a}→{visual_area_b} all polar bins",
         outdir / "matrix",
         ecc_bins,
         cmap=cmap,
@@ -1314,8 +1331,34 @@ def run_bin_by_bin_matrix_pairwise(
         vmax=vmax,
         log_scale=log_scale,
     )
-
-    return M
+    
+    # one matrix per polar bin
+    for polar_tag, M_polar in M_by_polar.items():
+        safe_tag = polar_tag.replace("-", "_")
+    
+        np.savetxt(
+            outdir / f"matrix_polar{safe_tag}.csv",
+            M_polar,
+            delimiter=",",
+            fmt="%.6f",
+        )
+    
+        plot_matrix(
+            M_polar,
+            f"Retinotopic connectivity {visual_area_a}→{visual_area_b} polar {polar_tag}",
+            outdir / f"matrix_polar{safe_tag}",
+            ecc_bins,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            log_scale=log_scale,
+        )
+    
+    mat_dict = {("all", "all"): M_summary}
+    for polar_tag, M_polar in M_by_polar.items():
+        mat_dict[("all", polar_tag)] = M_polar
+    
+    return mat_dict
 
 def run_single_subject_matrix(
     tract_tck: Path,
@@ -1461,7 +1504,7 @@ def run_single_subject_matrix(
     # bin_by_bin
     # --------------------------------------------------
     elif mode == "bin_by_bin":
-        M = run_bin_by_bin_matrix_pairwise(
+        mat_dict = run_bin_by_bin_matrix_pairwise(
             tract_tck=tract_tck,
             ecc_map=ecc_map,
             polar_map=polar_map,
@@ -1479,7 +1522,7 @@ def run_single_subject_matrix(
             vmax=vmax,
             n_jobs=n_jobs,
         )
-
+        M = mat_dict[("all", "all")]
         if make_dva_summary:
             dva_dir = work_outdir
             dva_dir.mkdir(exist_ok=True)
@@ -1508,4 +1551,4 @@ def run_single_subject_matrix(
             label_entries=make_bin_label_json(ecc_bins),
         )
 
-        return {("all", "all"): M}
+        return mat_dict
