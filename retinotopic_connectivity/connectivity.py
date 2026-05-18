@@ -1226,11 +1226,20 @@ def run_bin_by_bin_matrix_pairwise(
     vmin: Optional[float],
     vmax: Optional[float],
     n_jobs: int = 1,
+    matrix_elements: str = "eccentricity",
 ) -> np.ndarray:
     """
-    Compute the original ecc x ecc connectivity matrix between two visual areas
-    using explicit pairwise streamline filtering, with optional parallelization.
+    Compute retinotopic connectivity matrices.
+
+    matrix_elements="eccentricity"
+        -> classic ecc x ecc matrices
+           one per polar bin + summary across polar bins
+
+    matrix_elements="polar"
+        -> polar x polar matrices
+           one per ecc bin + summary across ecc bins
     """
+
     n_jobs = max(1, int(n_jobs))
     outdir.mkdir(parents=True, exist_ok=True)
 
@@ -1246,9 +1255,14 @@ def run_bin_by_bin_matrix_pairwise(
     areaA_mask = extract_visual_area_mask(
         varea_map, visual_area_a, roi_dir / f"{visual_area_a}.nii.gz"
     )
+
     areaB_mask = extract_visual_area_mask(
         varea_map, visual_area_b, roi_dir / f"{visual_area_b}.nii.gz"
     )
+
+    # ---------------------------------------------------------
+    # build all ROI combinations
+    # ---------------------------------------------------------
 
     tasks_roi = [
         (
@@ -1266,7 +1280,9 @@ def run_bin_by_bin_matrix_pairwise(
         for e in ecc_bins
         for polar in polar_bins
     ]
+
     results_roi = parallel_map(_build_roi_pair, tasks_roi, n_jobs)
+
     roiA_cache = {}
     roiB_cache = {}
 
@@ -1277,89 +1293,227 @@ def run_bin_by_bin_matrix_pairwise(
     areaA_cache = {k: mask_area(v, v) for k, v in roiA_cache.items()}
     areaB_cache = {k: mask_area(v, v) for k, v in roiB_cache.items()}
 
-    M_summary = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
-
-    M_by_polar = {
-        normalize_tag(polar): np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
-        for polar in polar_bins
-    }
-
-    tasks = []
-    for i, e1 in enumerate(ecc_bins):
-        for j, e2 in enumerate(ecc_bins):
-            tasks.append(
-                (
-                    i,
-                    j,
-                    e1,
-                    e2,
-                    roiA_cache,
-                    roiB_cache,
-                    areaA_cache,
-                    areaB_cache,
-                    tract_tck,
-                    polar_bins,
-                    outdir,
-                    visual_area_a,
-                    visual_area_b,
-                    ends_only,
-                    roi_order,
-                )
-            )
-    results=parallel_map(_compute_bin_by_bin_matrix_cell_precomputed, tasks,n_jobs)
-    for i, j, polar_densities in results:
-        total_density = 0.0
-    
-        for polar_tag, density in polar_densities.items():
-            M_by_polar[polar_tag][i, j] = density
-            total_density += density
-    
-        M_summary[i, j] = total_density
-
     cmap = resolve_cmap(color_map)
-    
-    # summary matrix: summed across all polar bins
-    np.savetxt(outdir / "matrix.csv", M_summary, delimiter=",", fmt="%.6f")
-    
-    plot_matrix(
-        M_summary,
-        f"Retinotopic connectivity {visual_area_a}→{visual_area_b} all polar bins",
-        outdir / "matrix",
-        ecc_bins,
-        cmap=cmap,
-        vmin=vmin,
-        vmax=vmax,
-        log_scale=log_scale,
-    )
-    
-    # one matrix per polar bin
-    for polar_tag, M_polar in M_by_polar.items():
-        safe_tag = polar_tag.replace("-", "_")
-    
-        np.savetxt(
-            outdir / f"matrix_polar{safe_tag}.csv",
-            M_polar,
-            delimiter=",",
-            fmt="%.6f",
+
+    mat_dict = {}
+
+    # =========================================================
+    # ECCENTRICITY MATRICES
+    # =========================================================
+
+    if matrix_elements == "eccentricity":
+
+        M_summary = np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+
+        M_by_polar = {
+            normalize_tag(polar): np.zeros((len(ecc_bins), len(ecc_bins)), dtype=float)
+            for polar in polar_bins
+        }
+
+        tasks = []
+
+        for i, e1 in enumerate(ecc_bins):
+            for j, e2 in enumerate(ecc_bins):
+
+                tasks.append(
+                    (
+                        i,
+                        j,
+                        e1,
+                        e2,
+                        roiA_cache,
+                        roiB_cache,
+                        areaA_cache,
+                        areaB_cache,
+                        tract_tck,
+                        polar_bins,
+                        outdir,
+                        visual_area_a,
+                        visual_area_b,
+                        ends_only,
+                        roi_order,
+                    )
+                )
+
+        results = parallel_map(
+            _compute_bin_by_bin_matrix_cell_precomputed,
+            tasks,
+            n_jobs,
         )
-    
+
+        for i, j, polar_densities in results:
+
+            total_density = 0.0
+
+            for polar_tag, density in polar_densities.items():
+                M_by_polar[polar_tag][i, j] = density
+                total_density += density
+
+            M_summary[i, j] = total_density
+
+        # summary matrix
+        np.savetxt(outdir / "matrix.csv", M_summary, delimiter=",", fmt="%.6f")
+
         plot_matrix(
-            M_polar,
-            f"Retinotopic connectivity {visual_area_a}→{visual_area_b} polar {polar_tag}",
-            outdir / f"matrix_polar{safe_tag}",
+            M_summary,
+            f"Retinotopic connectivity {visual_area_a}→{visual_area_b} all polar bins",
+            outdir / "matrix",
             ecc_bins,
             cmap=cmap,
             vmin=vmin,
             vmax=vmax,
             log_scale=log_scale,
         )
-    
-    mat_dict = {("all", "all"): M_summary}
-    for polar_tag, M_polar in M_by_polar.items():
-        mat_dict[("all", polar_tag)] = M_polar
-    
-    return mat_dict
 
+        mat_dict[("all", "all")] = M_summary
+
+        # per polar
+        for polar_tag, M_polar in M_by_polar.items():
+
+            safe_tag = polar_tag.replace("-", "_")
+
+            np.savetxt(
+                outdir / f"matrix_polar{safe_tag}.csv",
+                M_polar,
+                delimiter=",",
+                fmt="%.6f",
+            )
+
+            plot_matrix(
+                M_polar,
+                f"Retinotopic connectivity {visual_area_a}→{visual_area_b} polar {polar_tag}",
+                outdir / f"matrix_polar{safe_tag}",
+                ecc_bins,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                log_scale=log_scale,
+            )
+
+            mat_dict[("all", polar_tag)] = M_polar
+
+        return mat_dict
+
+    # =========================================================
+    # POLAR MATRICES
+    # =========================================================
+
+    elif matrix_elements == "polar":
+
+        M_summary = np.zeros((len(polar_bins), len(polar_bins)), dtype=float)
+
+        M_by_ecc = {
+            normalize_tag(ecc): np.zeros((len(polar_bins), len(polar_bins)), dtype=float)
+            for ecc in ecc_bins
+        }
+
+        for ecc in ecc_bins:
+
+            ecc_tag = normalize_tag(ecc)
+
+            for i, p1 in enumerate(polar_bins):
+                for j, p2 in enumerate(polar_bins):
+
+                    p1_tag = normalize_tag(p1)
+                    p2_tag = normalize_tag(p2)
+
+                    roi1 = roiA_cache[(ecc, p1_tag)]
+                    roi2 = roiB_cache[(ecc, p2_tag)]
+
+                    a1 = areaA_cache[(ecc, p1_tag)]
+                    a2 = areaB_cache[(ecc, p2_tag)]
+
+                    if a1 == 0 or a2 == 0:
+                        density = 0.0
+                    else:
+
+                        tck_out = (
+                            outdir
+                            / "tcks"
+                            / f"{visual_area_a}_{visual_area_b}_ecc{ecc_tag}_{p1_tag}_{p2_tag}.tck"
+                        )
+
+                        if not tck_out.exists():
+
+                            count = run_tckedit(
+                                tract_tck,
+                                roi1,
+                                roi2,
+                                tck_out,
+                                ends_only=ends_only,
+                                roi_order=roi_order,
+                            )
+
+                        else:
+                            try:
+                                count = int(
+                                    subprocess.check_output(
+                                        ["tckinfo", str(tck_out), "-count"]
+                                    )
+                                    .decode()
+                                    .split()[-1]
+                                )
+                            except Exception:
+                                count = 0
+
+                        area = (
+                            (a1 + a2) / 2.0
+                            if (a1 > 0 and a2 > 0)
+                            else max(a1, a2)
+                        )
+
+                        density = (count / area) if area > 0 else 0.0
+
+                    M_by_ecc[ecc_tag][i, j] = density
+                    M_summary[i, j] += density
+
+        # summary
+        np.savetxt(outdir / "matrix.csv", M_summary, delimiter=",", fmt="%.6f")
+
+        plot_matrix(
+            M_summary,
+            f"Retinotopic connectivity {visual_area_a}→{visual_area_b} all eccentricities",
+            outdir / "matrix",
+            polar_bins,
+            cmap=cmap,
+            vmin=vmin,
+            vmax=vmax,
+            log_scale=log_scale,
+        )
+
+        mat_dict[("all", "all")] = M_summary
+
+        # one matrix per ecc
+        for ecc_tag, M_ecc in M_by_ecc.items():
+
+            safe_tag = ecc_tag.replace("-", "_")
+
+            np.savetxt(
+                outdir / f"matrix_ecc{safe_tag}.csv",
+                M_ecc,
+                delimiter=",",
+                fmt="%.6f",
+            )
+
+            plot_matrix(
+                M_ecc,
+                f"Retinotopic connectivity {visual_area_a}→{visual_area_b} ecc {ecc_tag}",
+                outdir / f"matrix_ecc{safe_tag}",
+                polar_bins,
+                cmap=cmap,
+                vmin=vmin,
+                vmax=vmax,
+                log_scale=log_scale,
+            )
+
+            mat_dict[(ecc_tag, "all")] = M_ecc
+
+        return mat_dict
+
+    else:
+        raise ValueError(
+            f"Unknown matrix_elements '{matrix_elements}'"
+        )
 def run_single_subject_matrix(
     tract_tck: Path,
     ecc_map: Path,
@@ -1383,6 +1537,7 @@ def run_single_subject_matrix(
     area_matrix_method: str = "connectome",
     areas_global: bool = False,
     n_jobs: int = 1,
+    matrix_elements: str = "eccentricity",
 ):
     mode = str(mode).strip().lower()
 
@@ -1521,7 +1676,8 @@ def run_single_subject_matrix(
             vmin=vmin,
             vmax=vmax,
             n_jobs=n_jobs,
-        )
+            matrix_elements=matrix_elements,
+            )
         M = mat_dict[("all", "all")]
         if make_dva_summary:
             dva_dir = work_outdir
