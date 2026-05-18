@@ -84,6 +84,10 @@ echo
 
 run_in_env "${CMD[@]}"
 
-bash ./generate_product_json.sh "./figures" "./product.json"
+# ---------------------------------------------------------------------------
+# Generate product.json for brainlife
+# ---------------------------------------------------------------------------
+echo "Generating product.json ..."
+bash "./generate_product_json.sh" --compress "./figures" "./product.json"
 
 echo "Done. Outputs in ./output"
