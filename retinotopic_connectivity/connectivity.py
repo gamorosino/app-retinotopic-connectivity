@@ -885,6 +885,59 @@ def run_tck2connectome(
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
+def run_parcellation_connectome(
+    tract_tck: Path,
+    parc_map: Path,
+    outdir: Path,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+    n_jobs: int = 1,
+):
+    n_jobs = max(1, int(n_jobs))
+    labels = get_parc_labels(parc_map)
+    n_labels = len(labels)
+
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    out_csv = outdir / "matrix.csv"
+
+    if not out_csv.exists():
+        run_tck2connectome(
+            tract_tck,
+            parc_map,
+            out_csv,
+            n_nodes=n_labels,
+            n_threads=n_jobs,
+        )
+
+    try:
+        M = np.loadtxt(str(out_csv), delimiter=",")
+        if M.shape != (n_labels, n_labels):
+            print(
+                f"[WARNING] Expected parcellation matrix shape "
+                f"{(n_labels, n_labels)}, got {M.shape}. Filling zeros."
+            )
+            M = np.zeros((n_labels, n_labels))
+    except Exception as e:
+        print(f"[WARNING] Could not load parcellation connectome: {e}")
+        M = np.zeros((n_labels, n_labels))
+
+    cmap = resolve_cmap(color_map)
+
+    plot_area_matrix(
+        M,
+        "Parcellation structural connectivity",
+        outdir / "matrix",
+        [str(v) for v in labels],
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        log_scale=log_scale,
+    )
+
+    return M
 
 def make_masked_label_image(varea_img: Path, mask: Path, out_path: Path) -> Path:
     """
@@ -1659,7 +1712,7 @@ def run_single_subject_matrix(
 
     if mode not in {"area_by_area", "bin_by_bin", "parcellation"}:
         raise ValueError(
-            f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
+            f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin', 'parcellation'."
         )
 
     ecc_all = (len(ecc_bins) == 1 and normalize_tag(ecc_bins[0]) == "all")
@@ -1681,9 +1734,9 @@ def run_single_subject_matrix(
 
     if mode == "parcellation":
         if area_matrix_method == "connectome":
-            M = run_areas_connectome(
+            M = run_parcellation_connectome(
                 tract_tck=tract_tck,
-                varea_map=varea_map,
+                parc_map=varea_map,
                 outdir=work_outdir / "parc_connectome",
                 color_map=color_map,
                 log_scale=log_scale,
