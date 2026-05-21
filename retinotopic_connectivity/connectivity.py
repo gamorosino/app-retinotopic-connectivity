@@ -913,7 +913,7 @@ def run_parcellation_connectome(
     out_csv = outdir / "matrix.csv"
 
     if not out_csv.exists():
-        labels = get_label_values(parc_map)
+        labels = get_parc_labels(parc_map)
         n_labels = int(max(labels))
         
         print(f"[DEBUG] parc_map: {parc_map}")
