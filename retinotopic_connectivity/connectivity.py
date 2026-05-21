@@ -1657,7 +1657,7 @@ def run_single_subject_matrix(
 ):
     mode = str(mode).strip().lower()
 
-    if mode not in {"area_by_area", "bin_by_bin"}:
+    if mode not in {"area_by_area", "bin_by_bin", "parcellation"}:
         raise ValueError(
             f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
         )
