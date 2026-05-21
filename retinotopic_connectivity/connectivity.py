@@ -43,6 +43,122 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+def get_parc_labels(parc_map: Path):
+    data = np.squeeze(nib.load(str(parc_map)).get_fdata())
+    labels = sorted(int(v) for v in np.unique(data) if v > 0)
+    return labels
+
+
+def make_parc_label_json(parc_map: Path):
+    labels = [{"name": "self-loop", "desc": "index(x,x) is the diagonal"}]
+
+    for idx, value in enumerate(get_parc_labels(parc_map), start=1):
+        labels.append({
+            "name": f"parcel_{value}",
+            "label": str(value),
+            "voxel_value": value,
+        })
+
+    return labels
+
+
+def extract_parcel_mask(parc_map: Path, parcel_value: int, out_path: Path) -> Path:
+    if out_path.exists():
+        return out_path
+
+    img = nib.load(str(parc_map))
+    data = np.squeeze(img.get_fdata())
+
+    mask = (data == parcel_value).astype(np.uint8)
+    out_img = nib.Nifti1Image(mask, img.affine, img.header)
+    out_img.set_data_dtype(np.uint8)
+    nib.save(out_img, str(out_path))
+
+    return out_path
+
+def run_parcellation_pairwise(
+    tract_tck: Path,
+    parc_map: Path,
+    outdir: Path,
+    ends_only: bool,
+    roi_order: bool,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+    zero_diagonal: bool = True,
+    symmetric: bool = True,
+    n_jobs: int = 1,
+):
+    n_jobs = max(1, int(n_jobs))
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    labels = get_parc_labels(parc_map)
+    n_labels = len(labels)
+
+    roi_dir = outdir / "ROIs"
+    roi_dir.mkdir(exist_ok=True)
+
+    tck_dir = outdir / "tcks"
+    tck_dir.mkdir(exist_ok=True)
+
+    parcel_masks = {
+        value: extract_parcel_mask(
+            parc_map,
+            value,
+            roi_dir / f"parcel_{value}.nii.gz",
+        )
+        for value in labels
+    }
+
+    M = np.zeros((n_labels, n_labels), dtype=float)
+
+    if zero_diagonal:
+        np.fill_diagonal(M, 0.0)
+
+    tasks = []
+
+    for i, val_i in enumerate(labels):
+        for j, val_j in enumerate(labels):
+            if j < i:
+                continue
+
+            if zero_diagonal and i == j:
+                continue
+
+            roi1 = parcel_masks[val_i]
+            roi2 = parcel_masks[val_j]
+
+            tck_out = tck_dir / f"parcel_{val_i}_parcel_{val_j}.tck"
+
+            tasks.append(
+                (i, j, tract_tck, roi1, roi2, tck_out, ends_only, roi_order)
+            )
+
+    results = parallel_map(_compute_area_pair_density, tasks, n_jobs)
+
+    for i, j, density in results:
+        M[i, j] = density
+        if symmetric:
+            M[j, i] = density
+
+    np.savetxt(outdir / "matrix.csv", M, delimiter=",", fmt="%.6f")
+
+    cmap = resolve_cmap(color_map)
+
+    plot_area_matrix(
+        M,
+        "Parcellation structural connectivity",
+        outdir / "matrix",
+        [str(v) for v in labels],
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        log_scale=log_scale,
+    )
+
+    return M
+
 def init_output_layout(outdir: Path):
     """
     Public layout:
@@ -1541,7 +1657,7 @@ def run_single_subject_matrix(
 ):
     mode = str(mode).strip().lower()
 
-    if mode not in {"area_by_area", "bin_by_bin"}:
+    if mode not in {"area_by_area", "bin_by_bin", "parcellation"}:
         raise ValueError(
             f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
         )
@@ -1563,6 +1679,47 @@ def run_single_subject_matrix(
     layout = init_output_layout(outdir)
     work_outdir = layout["work_dir"]
 
+    if mode == "parcellation":
+        if area_matrix_method == "connectome":
+            M = run_areas_connectome(
+                tract_tck=tract_tck,
+                varea_map=varea_map,
+                outdir=work_outdir / "parc_connectome",
+                color_map=color_map,
+                log_scale=log_scale,
+                vmin=vmin,
+                vmax=vmax,
+                n_jobs=n_jobs,
+            )
+    
+        elif area_matrix_method == "pairwise":
+            M = run_parcellation_pairwise(
+                tract_tck=tract_tck,
+                parc_map=varea_map,
+                outdir=work_outdir / "parc_pairwise",
+                ends_only=ends_only,
+                roi_order=roi_order,
+                color_map=color_map,
+                log_scale=log_scale,
+                vmin=vmin,
+                vmax=vmax,
+                n_jobs=n_jobs,
+            )
+    
+        else:
+            raise ValueError(
+                f"Unknown area_matrix_method '{area_matrix_method}'. "
+                "Valid options are: 'connectome', 'pairwise'."
+            )
+    
+        export_artifacts_and_write_manifests(
+            work_root=work_outdir,
+            outdir=outdir,
+            label_entries=make_parc_label_json(varea_map),
+        )
+    
+        return {("all", "all"): M}
+    
     # --------------------------------------------------
     # area_by_area
     # --------------------------------------------------

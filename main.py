@@ -81,13 +81,15 @@ def main():
         description="Compute single-subject retinotopic connectivity matrix (Brainlife app)."
     )
     p.add_argument("--tck", required=True, type=str, help="Input tractogram (.tck)")
-    p.add_argument("--ecc", required=True, type=str, help="eccentricity.nii.gz")
-    p.add_argument("--polar", required=True, type=str, help="polarAngle.nii.gz")
-    p.add_argument("--varea", required=True, type=str, help="varea.nii.gz")
+    p.add_argument("--ecc", required=False, type=str)
+    p.add_argument("--polar", required=False, type=str)
+    p.add_argument("--varea", required=False, type=str)
+    p.add_argument("--parc", required=False, type=str)
     p.add_argument("--outdir", required=True, type=str, help="Output directory")
     p.add_argument("--config", required=False, type=str, default=None, help="Optional config.json")
     args = p.parse_args()
-
+    parc = Path(args.parc) if args.parc else None
+    is_parc_mode = parc is not None
     cfg = None
     if args.config:
         cfg = json.loads(Path(args.config).read_text())
@@ -142,7 +144,7 @@ def main():
             f"Valid options are: {sorted(valid_matrix_elements)}"
         )
 
-    valid_modes = {"area_by_area", "bin_by_bin"}
+    valid_modes = {"area_by_area", "bin_by_bin", "parcellation"}
     if mode not in valid_modes:
         raise ValueError(
             f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
@@ -158,6 +160,49 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    if is_parc_mode:
+        area_matrix_method = str(_get(cfg, "area_matrix_method", "connectome")).strip().lower()
+        if area_matrix_method not in {"connectome", "pairwise"}:
+            raise ValueError(
+                f"Invalid area_matrix_method '{area_matrix_method}'. "
+                "Valid options are: 'connectome', 'pairwise'."
+            )
+    
+        ends_only = bool(_get(cfg, "ends_only", True))
+        roi_order = bool(_get(cfg, "roi_order", False))
+        log_scale = bool(_get(cfg, "log_scale", False))
+        color_map = _get(cfg, "color_map", "hot")
+    
+        n_jobs = int(_get(cfg, "n_jobs", -1))
+        n_jobs = resolve_n_jobs(n_jobs)
+    
+        run_single_subject_matrix(
+            tract_tck=Path(args.tck),
+            ecc_map=None,
+            polar_map=None,
+            varea_map=parc,
+            ecc_bins=[],
+            polar_bins=[],
+            visual_area_a="",
+            visual_area_b="",
+            outdir=Path(args.outdir),
+            ends_only=ends_only,
+            roi_order=roi_order,
+            color_map=color_map,
+            log_scale=log_scale,
+            vmin=None,
+            vmax=None,
+            fit_gaussian=False,
+            fit_truncated_gaussian_normalized=False,
+            make_dva_summary=False,
+            mode="parcellation",
+            area_matrix_method=area_matrix_method,
+            n_jobs=n_jobs,
+            areas_global=False,
+        )
+        return
+
+    
     # color handling
     if mode == "area_by_area" and not is_global_mode:
         color_map = resolve_area_bin_colors(color_map, len(ecc_bins))
