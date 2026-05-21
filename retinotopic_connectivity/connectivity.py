@@ -862,12 +862,6 @@ def run_tck2connectome(
     n_nodes: int = 12,
     n_threads: int = 0,
 ) -> None:
-    """
-    Run MRtrix tck2connectome to produce a n_nodes × n_nodes area connectivity CSV.
-    Flags:
-      -symmetric -zero_diagonal -assignment_end_voxels -scale_invnodevol -force
-      -nthreads N
-    """
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -883,8 +877,23 @@ def run_tck2connectome(
         "-nthreads",
         str(n_threads),
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
+    print("[DEBUG] Running:", " ".join(cmd))
+
+    res = subprocess.run(cmd, capture_output=True, text=True)
+
+    if res.returncode != 0:
+        raise RuntimeError(
+            "tck2connectome failed.\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"STDOUT:\n{res.stdout}\n"
+            f"STDERR:\n{res.stderr}"
+        )
+
+    if not out_csv.exists():
+        raise RuntimeError(
+            f"tck2connectome completed but did not create output file: {out_csv}"
+        )
 def run_parcellation_connectome(
     tract_tck: Path,
     parc_map: Path,
@@ -904,6 +913,13 @@ def run_parcellation_connectome(
     out_csv = outdir / "matrix.csv"
 
     if not out_csv.exists():
+        labels = get_label_values(parc_map)
+        n_labels = int(max(labels))
+        
+        print(f"[DEBUG] parc_map: {parc_map}")
+        print(f"[DEBUG] labels: min={min(labels)}, max={max(labels)}, n={len(labels)}")
+        print(f"[DEBUG] tract_tck: {tract_tck}")
+        print(f"[DEBUG] out_csv: {out_csv}")
         run_tck2connectome(
             tract_tck,
             parc_map,
