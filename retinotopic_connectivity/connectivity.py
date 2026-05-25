@@ -938,26 +938,26 @@ def run_parcellation_connectome(
     label_json: Optional[Path] = None,
 ):
     n_jobs = max(1, int(n_jobs))
+
     labels = get_parc_labels(parc_map)
-    n_labels = len(labels)
+    n_labels = int(max(labels))
+
+    _, label_map = read_label_json(label_json)
+
+    if label_map is not None:
+        plot_labels = [label_map.get(v, str(v)) for v in range(1, n_labels + 1)]
+    else:
+        plot_labels = [str(v) for v in range(1, n_labels + 1)]
 
     outdir.mkdir(parents=True, exist_ok=True)
-
     out_csv = outdir / "matrix.csv"
 
-    if not out_csv.exists():
-        labels = get_parc_labels(parc_map)
-        n_labels = int(max(labels))
-        _, label_map = read_label_json(label_json)
+    print(f"[DEBUG] parc_map: {parc_map}")
+    print(f"[DEBUG] labels: min={min(labels)}, max={max(labels)}, n={len(labels)}")
+    print(f"[DEBUG] tract_tck: {tract_tck}")
+    print(f"[DEBUG] out_csv: {out_csv}")
 
-        if label_map is not None:
-            plot_labels = [label_map.get(v, str(v)) for v in labels]
-        else:
-            plot_labels = [str(v) for v in labels]
-        print(f"[DEBUG] parc_map: {parc_map}")
-        print(f"[DEBUG] labels: min={min(labels)}, max={max(labels)}, n={len(labels)}")
-        print(f"[DEBUG] tract_tck: {tract_tck}")
-        print(f"[DEBUG] out_csv: {out_csv}")
+    if not out_csv.exists():
         run_tck2connectome(
             tract_tck,
             parc_map,
