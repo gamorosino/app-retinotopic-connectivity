@@ -119,7 +119,7 @@ def run_parcellation_pairwise(
     outdir.mkdir(parents=True, exist_ok=True)
 
     labels = get_parc_labels(parc_map)
-    n_labels = len(labels)
+    n_labels = int(max(labels))
 
     _, label_map = read_label_json(label_json)
     
