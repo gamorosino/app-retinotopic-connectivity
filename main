@@ -39,6 +39,7 @@ fi
 
 # Optional parcellation input
 PARC=$(jq -r '.parc // empty' "${CONFIG}")
+LABEL=$(jq -r '.label // empty' "${CONFIG}")
 
 if [[ -n "${PARC}" ]]; then
   if [[ ! -f "${PARC}" ]]; then
@@ -52,6 +53,10 @@ if [[ -n "${PARC}" ]]; then
     --outdir output
     --config "${CONFIG}"
   )
+
+  if [[ -n "${LABEL}" ]]; then
+    CMD+=(--label "${LABEL}")
+  fi
 
 else
   
