@@ -87,6 +87,7 @@ def main():
     p.add_argument("--parc", required=False, type=str)
     p.add_argument("--outdir", required=True, type=str, help="Output directory")
     p.add_argument("--config", required=False, type=str, default=None, help="Optional config.json")
+    p.add_argument("--label", required=False, type=str, default=None, help="Optional label.json")
     args = p.parse_args()
     parc = Path(args.parc) if args.parc else None
     is_parc_mode = parc is not None
@@ -175,7 +176,10 @@ def main():
     
         n_jobs = int(_get(cfg, "n_jobs", -1))
         n_jobs = resolve_n_jobs(n_jobs)
-    
+        
+        label_json = _get(cfg, "label", args.label)
+        label_json = Path(label_json) if label_json else None
+        
         run_single_subject_matrix(
             tract_tck=Path(args.tck),
             ecc_map=None,
@@ -199,6 +203,7 @@ def main():
             area_matrix_method=area_matrix_method,
             n_jobs=n_jobs,
             areas_global=False,
+            label_json=label_json,
         )
         return
 
