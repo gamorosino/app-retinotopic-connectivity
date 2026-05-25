@@ -948,7 +948,12 @@ def run_parcellation_connectome(
     if not out_csv.exists():
         labels = get_parc_labels(parc_map)
         n_labels = int(max(labels))
-        
+        _, label_map = read_label_json(label_json)
+
+        if label_map is not None:
+            plot_labels = [label_map.get(v, str(v)) for v in labels]
+        else:
+            plot_labels = [str(v) for v in labels]
         print(f"[DEBUG] parc_map: {parc_map}")
         print(f"[DEBUG] labels: min={min(labels)}, max={max(labels)}, n={len(labels)}")
         print(f"[DEBUG] tract_tck: {tract_tck}")
