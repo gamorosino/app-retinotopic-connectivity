@@ -903,7 +903,7 @@ def run_tck2connectome(
         str(out_csv),
         "-symmetric",
         "-zero_diagonal",
-        "-assignment_end_voxels",
+        "-assignment_radial_search", "1",
         "-scale_invnodevol",
         "-force",
         "-nthreads",
@@ -1101,7 +1101,7 @@ def run_areas_by_areas_connectome(
       1. create a combined retinotopic mask
       2. restrict the visual-area label image to that mask
       3. filter streamlines so both endpoints lie within the mask
-      4. run tck2connectome -assignment_end_voxels
+      4. run tck2connectome -assignment_radial_search 1
 
     Outputs are stored under: outdir/areas_by_areas_connectome/
     """
