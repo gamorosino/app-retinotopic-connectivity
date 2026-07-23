@@ -43,6 +43,31 @@ from concurrent.futures import ProcessPoolExecutor
 # ---------------------------------------------------------------------
 AREA_LABELS = ["V1", "V2", "V3", "hV4", "VO1", "VO2", "LO1", "LO2", "TO1", "TO2", "V3b", "V3a"]
 
+def read_label_json(label_json: Optional[Path]):
+    """
+    Read an optional Brainlife-style label.json and return:
+      - label_entries: full JSON entries, for export
+      - label_map: voxel_value -> name, for plotting
+    """
+    if label_json is None:
+        return None, None
+
+    with open(label_json, "r") as f:
+        label_entries = json.load(f)
+
+    label_map = {}
+    for item in label_entries:
+        if "voxel_value" not in item:
+            continue
+
+        voxel_value = int(item["voxel_value"])
+        if voxel_value == 0:
+            continue
+
+        label_map[voxel_value] = item.get("name", str(voxel_value))
+
+    return label_entries, label_map
+
 def get_parc_labels(parc_map: Path):
     data = np.squeeze(nib.load(str(parc_map)).get_fdata())
     labels = sorted(int(v) for v in np.unique(data) if v > 0)
@@ -94,8 +119,15 @@ def run_parcellation_pairwise(
     outdir.mkdir(parents=True, exist_ok=True)
 
     labels = get_parc_labels(parc_map)
-    n_labels = len(labels)
+    n_labels = int(max(labels))
 
+    _, label_map = read_label_json(label_json)
+    
+    if label_map is not None:
+        plot_labels = [label_map.get(v, str(v)) for v in labels]
+    else:
+        plot_labels = [str(v) for v in labels]
+    
     roi_dir = outdir / "ROIs"
     roi_dir.mkdir(exist_ok=True)
 
@@ -862,12 +894,6 @@ def run_tck2connectome(
     n_nodes: int = 12,
     n_threads: int = 0,
 ) -> None:
-    """
-    Run MRtrix tck2connectome to produce a n_nodes × n_nodes area connectivity CSV.
-    Flags:
-      -symmetric -zero_diagonal -assignment_end_voxels -scale_invnodevol -force
-      -nthreads N
-    """
     out_csv.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
@@ -883,8 +909,91 @@ def run_tck2connectome(
         "-nthreads",
         str(n_threads),
     ]
-    subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
 
+    print("[DEBUG] Running:", " ".join(cmd))
+
+    res = subprocess.run(cmd, capture_output=True, text=True)
+
+    if res.returncode != 0:
+        raise RuntimeError(
+            "tck2connectome failed.\n"
+            f"Command: {' '.join(cmd)}\n"
+            f"STDOUT:\n{res.stdout}\n"
+            f"STDERR:\n{res.stderr}"
+        )
+
+    if not out_csv.exists():
+        raise RuntimeError(
+            f"tck2connectome completed but did not create output file: {out_csv}"
+        )
+def run_parcellation_connectome(
+    tract_tck: Path,
+    parc_map: Path,
+    outdir: Path,
+    color_map: str,
+    log_scale: bool,
+    vmin: Optional[float],
+    vmax: Optional[float],
+    n_jobs: int = 1,
+    label_json: Optional[Path] = None,
+):
+    n_jobs = max(1, int(n_jobs))
+
+    labels = get_parc_labels(parc_map)
+    n_labels = int(max(labels))
+
+    _, label_map = read_label_json(label_json)
+
+    if label_map is not None:
+        plot_labels = [label_map.get(v, str(v)) for v in range(1, n_labels + 1)]
+    else:
+        plot_labels = [str(v) for v in range(1, n_labels + 1)]
+
+    outdir.mkdir(parents=True, exist_ok=True)
+    out_csv = outdir / "matrix.csv"
+
+    print(f"[DEBUG] parc_map: {parc_map}")
+    print(f"[DEBUG] labels: min={min(labels)}, max={max(labels)}, n={len(labels)}")
+    print(f"[DEBUG] tract_tck: {tract_tck}")
+    print(f"[DEBUG] out_csv: {out_csv}")
+
+    if not out_csv.exists():
+        run_tck2connectome(
+            tract_tck,
+            parc_map,
+            out_csv,
+            n_nodes=n_labels,
+            n_threads=n_jobs,
+        )
+
+    try:
+        M = np.loadtxt(str(out_csv), delimiter=",")
+        if M.shape != (n_labels, n_labels):
+            print(
+                f"[WARNING] Expected parcellation matrix shape "
+                f"{(n_labels, n_labels)}, got {M.shape}. Filling zeros."
+            )
+            M = np.zeros((n_labels, n_labels))
+    except Exception as e:
+        print(f"[WARNING] Could not load parcellation connectome: {e}")
+        M = np.zeros((n_labels, n_labels))
+
+    cmap = resolve_cmap(color_map)
+
+    plot_area_matrix(
+        M,
+        "Parcellation structural connectivity",
+        outdir / "matrix",
+        plot_labels,
+        cmap=cmap,
+        vmin=vmin,
+        vmax=vmax,
+        log_scale=log_scale,
+        xlabel="Brain area",
+        ylabel="Brain area",
+    )
+
+    return M
 
 def make_masked_label_image(varea_img: Path, mask: Path, out_path: Path) -> Path:
     """
@@ -905,7 +1014,18 @@ def make_masked_label_image(varea_img: Path, mask: Path, out_path: Path) -> Path
     return out_path
 
 
-def plot_area_matrix(matrix: np.ndarray, title: str, path: Path, labels: List[str], cmap: str = "viridis", vmin: Optional[float] = None, vmax: Optional[float] = None, log_scale: bool = False):
+def plot_area_matrix(
+    matrix: np.ndarray,
+    title: str,
+    path: Path,
+    labels: List[str],
+    cmap: str = "viridis",
+    vmin: Optional[float] = None,
+    vmax: Optional[float] = None,
+    log_scale: bool = False,
+    xlabel: str = "Brain area",
+    ylabel: str = "Brain area",
+):
     """Plot a 12×12 visual-area connectivity matrix."""
     plt.figure(figsize=(7, 6))
     mat = matrix.astype(float)
@@ -921,8 +1041,8 @@ def plot_area_matrix(matrix: np.ndarray, title: str, path: Path, labels: List[st
 
     plt.xticks(range(len(labels)), labels, rotation=45, ha="right")
     plt.yticks(range(len(labels)), labels)
-    plt.xlabel("Visual area")
-    plt.ylabel("Visual area")
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
     plt.title(title + (" (Log Scale)" if log_scale else ""), fontsize=10)
     plt.tight_layout()
     save_figure(path, dpi=300)
@@ -1654,12 +1774,13 @@ def run_single_subject_matrix(
     areas_global: bool = False,
     n_jobs: int = 1,
     matrix_elements: str = "eccentricity",
-):
+    label_json: Optional[Path] = None,
+    ):
     mode = str(mode).strip().lower()
 
     if mode not in {"area_by_area", "bin_by_bin", "parcellation"}:
         raise ValueError(
-            f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin'."
+            f"Invalid mode '{mode}'. Valid options are: 'area_by_area', 'bin_by_bin', 'parcellation'."
         )
 
     ecc_all = (len(ecc_bins) == 1 and normalize_tag(ecc_bins[0]) == "all")
@@ -1681,16 +1802,17 @@ def run_single_subject_matrix(
 
     if mode == "parcellation":
         if area_matrix_method == "connectome":
-            M = run_areas_connectome(
-                tract_tck=tract_tck,
-                varea_map=varea_map,
-                outdir=work_outdir / "parc_connectome",
-                color_map=color_map,
-                log_scale=log_scale,
-                vmin=vmin,
-                vmax=vmax,
-                n_jobs=n_jobs,
-            )
+            M = run_parcellation_connectome(
+            tract_tck=tract_tck,
+            parc_map=varea_map,
+            outdir=work_outdir / "parc_connectome",
+            color_map=color_map,
+            log_scale=log_scale,
+            vmin=vmin,
+            vmax=vmax,
+            n_jobs=n_jobs,
+            label_json=label_json,
+        )
     
         elif area_matrix_method == "pairwise":
             M = run_parcellation_pairwise(
@@ -1712,10 +1834,15 @@ def run_single_subject_matrix(
                 "Valid options are: 'connectome', 'pairwise'."
             )
     
+        label_entries, _ = read_label_json(label_json)
+
+        if label_entries is None:
+            label_entries = make_parc_label_json(varea_map)
+        
         export_artifacts_and_write_manifests(
             work_root=work_outdir,
             outdir=outdir,
-            label_entries=make_parc_label_json(varea_map),
+            label_entries=label_entries,
         )
     
         return {("all", "all"): M}
