@@ -191,12 +191,12 @@ def run_parcellation_pairwise(
 
     return M
 
-def init_output_layout(outdir: Path):
+def init_output_layout(outdir: Path, work_root: Optional[Path] = None):
     """
     Public layout:
       <parent_of_outdir>/
         output/
-          _work/
+          _work/            (or `work_root`, if given)
         figures/
           images.json
           images/
@@ -206,7 +206,9 @@ def init_output_layout(outdir: Path):
           csv/
 
     Here, `outdir` is the internal working/output directory, and
-    figures/matrices are created next to it.
+    figures/matrices are created next to it. `work_root`, if provided,
+    relocates the heavy intermediate computation directory (ROIs/tcks/etc.)
+    away from `outdir` entirely, e.g. onto fast local scratch storage.
     """
     root_dir = outdir.parent
 
@@ -216,7 +218,7 @@ def init_output_layout(outdir: Path):
     matrices_dir = root_dir / "matrices"
     csv_dir = matrices_dir / "csv"
 
-    work_dir = outdir / "_work"
+    work_dir = Path(work_root) if work_root is not None else (outdir / "_work")
 
     images_dir.mkdir(parents=True, exist_ok=True)
     csv_dir.mkdir(parents=True, exist_ok=True)
@@ -285,7 +287,7 @@ def export_artifacts_and_write_manifests(
 
     Intermediates such as .nii.gz, .tck remain in _work/.
     """
-    layout = init_output_layout(outdir)
+    layout = init_output_layout(outdir, work_root=work_root)
     images_dir = layout["images_dir"]
     csv_dir = layout["csv_dir"]
     figures_dir = layout["figures_dir"]
@@ -1775,6 +1777,7 @@ def run_single_subject_matrix(
     n_jobs: int = 1,
     matrix_elements: str = "eccentricity",
     label_json: Optional[Path] = None,
+    work_dir: Optional[Path] = None,
     ):
     mode = str(mode).strip().lower()
 
@@ -1797,7 +1800,7 @@ def run_single_subject_matrix(
             "and polar_bins='all'. Use mode='area_by_area' with areas_global=True instead."
         )
 
-    layout = init_output_layout(outdir)
+    layout = init_output_layout(outdir, work_root=work_dir)
     work_outdir = layout["work_dir"]
 
     if mode == "parcellation":
