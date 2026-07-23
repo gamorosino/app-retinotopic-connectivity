@@ -23,6 +23,7 @@ CONFIG_OUT="config.json"
 CONFIG_OUT_SET=0
 OUTDIR=""
 DRY_RUN=0
+NO_CONTAINER=0
 declare -a JSON_FRAGMENTS=()
 
 usage() {
@@ -58,7 +59,18 @@ Options:
   --output_dir DIR  CLI-only: run ./main from inside DIR, so output/, figures/,
                     matrices/ and product.json land there instead of the repo
                     root.
+  --workdir DIR     relocate the heavy intermediate computation directory
+                    (ROIs/tcks/etc.) to DIR instead of nesting it under
+                    output/_work. Useful to point scratch I/O at fast local
+                    storage while --output_dir keeps final results elsewhere.
   --dry-run         only generate and print config.json; do not run ./main
+  --no-container    skip Singularity entirely and run against
+                    locally-installed software instead (a native MRtrix3 +
+                    Python env with this app's dependencies already on
+                    PATH/importable). Uses a local
+                    `micromamba run -n tract_align` if that environment
+                    exists, else runs commands directly; --compress falls
+                    back to a local `convert`/`magick` (ImageMagick).
   -h, --help        show this help
 EOF
 }
@@ -97,8 +109,18 @@ while [[ $# -gt 0 ]]; do
       OUTDIR="$2"
       shift 2
       ;;
+    --workdir)
+      [[ $# -ge 2 ]] || { echo "ERROR: missing value for --workdir" >&2; exit 1; }
+      mkdir -p "$2"
+      JSON_FRAGMENTS+=("$(to_json_fragment "workdir" "$(realpath "$2")")")
+      shift 2
+      ;;
     --dry-run)
       DRY_RUN=1
+      shift
+      ;;
+    --no-container)
+      NO_CONTAINER=1
       shift
       ;;
     --*=*)
@@ -158,9 +180,9 @@ fi
 if [[ -n "${OUTDIR}" ]]; then
   echo
   echo "Running ./main in ${OUTDIR} (output/, figures/, matrices/, product.json will land there) ..."
-  ( cd "${OUTDIR}" && CONFIG="${CONFIG_OUT}" bash "${SCRIPT_DIR}/main" )
+  ( cd "${OUTDIR}" && CONFIG="${CONFIG_OUT}" NO_CONTAINER="${NO_CONTAINER}" bash "${SCRIPT_DIR}/main" )
 else
   echo
   echo "Running ./main with CONFIG=${CONFIG_OUT} ..."
-  CONFIG="${CONFIG_OUT}" bash "${SCRIPT_DIR}/main"
+  CONFIG="${CONFIG_OUT}" NO_CONTAINER="${NO_CONTAINER}" bash "${SCRIPT_DIR}/main"
 fi

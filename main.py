@@ -161,6 +161,9 @@ def main():
     outdir = Path(args.outdir)
     outdir.mkdir(parents=True, exist_ok=True)
 
+    workdir_cfg = _get(cfg, "workdir", None)
+    work_dir = Path(workdir_cfg) if workdir_cfg else None
+
     if is_parc_mode:
         area_matrix_method = str(_get(cfg, "area_matrix_method", "connectome")).strip().lower()
         if area_matrix_method not in {"connectome", "pairwise"}:
@@ -204,6 +207,7 @@ def main():
             n_jobs=n_jobs,
             areas_global=False,
             label_json=label_json,
+            work_dir=work_dir,
         )
         return
 
@@ -253,7 +257,8 @@ def main():
         matrix_elements=matrix_elements,
         area_matrix_method=area_matrix_method,
         n_jobs=n_jobs,
-        areas_global=is_global_mode
+        areas_global=is_global_mode,
+        work_dir=work_dir,
     )
 
 

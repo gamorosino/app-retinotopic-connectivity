@@ -62,6 +62,11 @@ done
 image_dir="${1:?Usage: $0 [--compress] <image_dir> <product_json>}"
 product_json="${2:?Usage: $0 [--compress] <image_dir> <product_json>}"
 
+# Resolve to an absolute path so paths found under it don't depend on cwd
+# when handed to a container below (relative paths would only resolve
+# correctly if the container's cwd happened to match ours).
+image_dir="$(cd "${image_dir}" && pwd)"
+
 metrics_json="null"
 metrics_file="${image_dir}/metrics.json"
 if [[ -f "$metrics_file" ]]; then
@@ -90,8 +95,33 @@ fi
 # ----------------------------
 IMG_CONTAINER="${IMG_CONTAINER:-docker://brainlife/imagemagick:latest}"
 
-IMG_CONTAINER="${IMG_CONTAINER:-docker://brainlife/imagemagick:latest}"
+# Bind whatever mount points host the images/tmpdir we pass into the
+# container, in case they live outside Singularity/Apptainer's default
+# shared paths (e.g. a network mount). Computed once since cwd doesn't
+# change during this script's run.
+_mount_point_of() {
+    local resolved mount_point
+    resolved="$(readlink -f "$1" 2>/dev/null || echo "$1")"
+    mount_point="$(df --output=target -- "${resolved}" 2>/dev/null | tail -n1 | xargs || true)"
+    [[ -n "${mount_point}" && "${mount_point}" != "/" ]] && echo "${mount_point}"
+}
 
+CONTAINER_BINDS=()
+declare -A _CONTAINER_BIND_SEEN=()
+if [[ "${NO_CONTAINER:-0}" != "1" ]]; then
+    for _p in "${image_dir}" "${TMPDIR}"; do
+        _mp="$(_mount_point_of "${_p}")"
+        if [[ -n "${_mp}" && -z "${_CONTAINER_BIND_SEEN[${_mp}]:-}" ]]; then
+            _CONTAINER_BIND_SEEN["${_mp}"]=1
+            CONTAINER_BINDS+=(--bind "${_mp}:${_mp}")
+        fi
+    done
+fi
+
+# Singularity/Apptainer's own startup fails if the *invoking shell's* cwd
+# is on a FUSE mount (e.g. sshfs) -- run from a safe local cwd (cd / in a
+# subshell) regardless of where we actually are. Set NO_CONTAINER=1 to skip
+# containers entirely and use a locally-installed `convert`/`magick` instead.
 img_to_png() {
     local input="$1"
     local output="$2"
@@ -102,10 +132,19 @@ img_to_png() {
         resize_args=(-resize "${percent}%")
     fi
 
-    if command -v apptainer >/dev/null 2>&1; then
-        apptainer exec "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output"
+    if [[ "${NO_CONTAINER:-0}" == "1" ]]; then
+        if command -v magick >/dev/null 2>&1; then
+            magick "$input" "${resize_args[@]}" PNG:"$output"
+        elif command -v convert >/dev/null 2>&1; then
+            convert "$input" "${resize_args[@]}" PNG:"$output"
+        else
+            echo "Error: --compress with NO_CONTAINER=1 requires a local 'convert' or 'magick' (ImageMagick)." >&2
+            exit 1
+        fi
+    elif command -v apptainer >/dev/null 2>&1; then
+        ( cd / && apptainer exec "${CONTAINER_BINDS[@]}" "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output" )
     elif command -v singularity >/dev/null 2>&1; then
-        singularity exec "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output"
+        ( cd / && singularity exec "${CONTAINER_BINDS[@]}" "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output" )
     else
         echo "Error: --compress requires apptainer or singularity." >&2
         exit 1

@@ -89,6 +89,48 @@ Or provide a configuration file:
 CONFIG=config.json ./main
 ```
 
+### Using main_cli.sh
+
+`main_cli.sh` builds `config.json` from `--<key> <value>` flags (mirroring
+the config keys documented below) and then runs `./main` with it:
+
+```bash
+./main_cli.sh \
+  --track tractogram.tck \
+  --eccentricity eccentricity.nii.gz \
+  --polarAngle polarAngle.nii.gz \
+  --varea varea.nii.gz \
+  --mode bin_by_bin \
+  --ecc_bins "0-2,2-4,4-6,6-8,8-90" \
+  --ends_only --roi_order
+```
+
+Any `--<key> <value>` pair becomes a `"<key>": <value>` entry in
+`config.json` (types are auto-detected: `true`/`false` -> boolean, numeric
+-> number, else string). A bare `--<key>` (no value, or followed by another
+`--flag`) is treated as `--<key> true`.
+
+Extra CLI-only options (not written into `config.json` as-is):
+
+| Option             | Description                                                                                                             |
+| ------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `--config PATH`     | write the generated config to `PATH` instead of `./config.json`                                                          |
+| `--output_dir DIR`  | run `./main` from inside `DIR`, so `output/`, `figures/`, `matrices/`, and `product.json` land there instead of the repo root |
+| `--workdir DIR`     | relocate the heavy intermediate computation directory (ROIs/tcks/etc., normally nested under `output/_work`) to `DIR` — e.g. point scratch I/O at fast local storage while `--output_dir` keeps final results elsewhere |
+| `--dry-run`         | only generate and print `config.json`; do not run `./main`                                                               |
+| `--no-container`    | skip Singularity entirely and run against locally-installed software (a native MRtrix3 + Python env with this app's dependencies already on PATH/importable). Uses a local `micromamba run -n tract_align` if that environment exists, else runs commands directly; `--compress` falls back to a local `convert`/`magick` (ImageMagick). |
+
+Run `./main_cli.sh --help` for the full flag reference.
+
+`./main` transparently handles running from directories on a FUSE mount
+(e.g. sshfs) — it invokes Singularity from a safe local cwd and explicitly
+binds/points it at the real working directory, working around a Singularity
+limitation where its own startup fails if its *invoking shell's* cwd is on
+such a mount. It also auto-detects and `--bind`s the mount point of any
+input/output/config/workdir path that lives outside Singularity's default
+shared paths (e.g. a second network mount), so those files are visible
+inside the container. No extra flags are needed for this.
+
 ---
 
 # Visual area labels
@@ -269,6 +311,14 @@ Results from these methods **are not identical**.
 | Parameter | Description                            |
 | --------- | -------------------------------------- |
 | n_jobs    | number of CPU cores (`-1` = all cores) |
+
+---
+
+## Working directory
+
+| Parameter | Description                                                                                                   |
+| --------- | -------------------------------------------------------------------------------------------------------------- |
+| workdir   | relocate the heavy intermediate computation directory (ROIs/tcks/etc.) away from `output/_work`, e.g. to scratch storage. Only exported artifacts (figures/matrices) are copied out; leave unset to keep the default layout. |
 
 ---
 

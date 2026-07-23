@@ -1,14 +1,92 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Resolve script-relative paths (main.py, generate_product_json.sh) by their
+# absolute location, not by cwd -- callers (e.g. main_cli.sh --output_dir)
+# may run this from a different directory than the repo root.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Brainlife apps generally run from the repo root.
 # Inputs are mounted under ./input and outputs go to ./output.
 mkdir -p output
 
+# Singularity here only shares a limited default set of host paths (e.g.
+# $HOME) with the container -- anything on a separately-mounted filesystem
+# (a second sshfs mount, a different disk, etc.) is otherwise invisible
+# inside the container. EXTRA_BINDS collects --bind flags for the mount
+# point of every path we actually reference, so the container can see them
+# regardless of where they live on the host.
+EXTRA_BINDS=()
+declare -A _BIND_SEEN=()
+
+add_bind_for() {
+  local target="$1"
+  [[ -n "${target}" ]] || return 0
+  local resolved mount_point
+  resolved="$(readlink -f "${target}" 2>/dev/null || echo "${target}")"
+  mount_point="$(df --output=target -- "${resolved}" 2>/dev/null | tail -n1 | xargs || true)"
+  [[ -n "${mount_point}" && "${mount_point}" != "/" ]] || return 0
+  if [[ -z "${_BIND_SEEN[${mount_point}]:-}" ]]; then
+    _BIND_SEEN["${mount_point}"]=1
+    EXTRA_BINDS+=(--bind "${mount_point}:${mount_point}")
+  fi
+}
+
 # Helper to run inside your container+micromamba environment
+#
+# Set NO_CONTAINER=1 to skip Singularity entirely and run "$@" against a
+# locally-installed "tract_align" environment (a native MRtrix3 + Python env
+# with this app's dependencies already available), checking micromamba
+# first, then conda. Falls back to running the command directly if neither
+# has a matching environment.
+#
+# Otherwise: Singularity's own startup fails with "Failed to open current
+# working directory: Permission denied" whenever the *invoking shell's* cwd
+# is on a FUSE mount (e.g. sshfs) -- no singularity flag prevents this,
+# since it happens before the container even starts. The fix is to invoke
+# singularity itself from a safe, local cwd (cd / in a subshell) and tell it
+# where the real working directory should be via --pwd, combined with
+# EXTRA_BINDS so that directory (and anything else we reference) is
+# actually visible inside the container.
 run_in_env() {
-  singularity exec -e docker://gamorosino/tract_align:v1.0 \
-    micromamba run -n tract_align "$@"
+  if [[ "${NO_CONTAINER:-0}" == "1" ]]; then
+    if command -v micromamba >/dev/null 2>&1 && micromamba env list 2>/dev/null | grep -qw tract_align; then
+      micromamba run -n tract_align "$@"
+      return
+    fi
+
+    # `conda` is usually only put on PATH by a `conda init` block in
+    # ~/.bashrc, which a non-interactive `bash script` doesn't source.
+    # Source conda.sh directly from common install locations if needed.
+    if ! command -v conda >/dev/null 2>&1; then
+      for _conda_sh in "${HOME}/miniconda3/etc/profile.d/conda.sh" \
+                       "${HOME}/anaconda3/etc/profile.d/conda.sh" \
+                       "${HOME}/miniforge3/etc/profile.d/conda.sh" \
+                       "/opt/conda/etc/profile.d/conda.sh"; do
+        if [[ -f "${_conda_sh}" ]]; then
+          # shellcheck disable=SC1090
+          source "${_conda_sh}"
+          break
+        fi
+      done
+    fi
+
+    if command -v conda >/dev/null 2>&1 && conda env list 2>/dev/null | grep -qw tract_align; then
+      conda run -n tract_align "$@"
+    else
+      "$@"
+    fi
+    return
+  fi
+
+  local host_pwd
+  host_pwd="$(pwd)"
+  (
+    cd /
+    singularity exec -e --pwd "${host_pwd}" "${EXTRA_BINDS[@]}" \
+      docker://gamorosino/tract_align:v1.1 \
+      micromamba run -n tract_align "$@"
+  )
 }
 
 # Read config.json (Brainlife auto-generates this at runtime)
@@ -40,6 +118,9 @@ fi
 # Optional parcellation input
 PARC=$(jq -r '.parc // empty' "${CONFIG}")
 LABEL=$(jq -r '.label // empty' "${CONFIG}")
+ECC=""
+POL=""
+VAREA=""
 
 if [[ -n "${PARC}" ]]; then
   if [[ ! -f "${PARC}" ]]; then
@@ -47,7 +128,7 @@ if [[ -n "${PARC}" ]]; then
     exit 1
   fi
 
-  CMD=(python3 main.py
+  CMD=(python3 "${SCRIPT_DIR}/main.py"
     --tck "${TCK}"
     --parc "${PARC}"
     --outdir output
@@ -92,7 +173,7 @@ else
   AREAS_PER_ECC=$(jq -r '.areas_per_ecc // false' "${CONFIG}")
   MATRIX_ELEMENTS=$(jq -r '.matrix_elements // "eccentricity"' "${CONFIG}")
   # Build command
-  CMD=(python3 main.py
+  CMD=(python3 "${SCRIPT_DIR}/main.py"
     --tck "${TCK}"
     --ecc "${ECC}"
     --polar "${POL}"
@@ -104,6 +185,14 @@ else
 
 fi
 
+WORKDIR=$(jq -r '.workdir // empty' "${CONFIG}")
+
+if [[ "${NO_CONTAINER:-0}" != "1" ]]; then
+  for BIND_TARGET in "$(pwd)" "${TCK}" "${PARC}" "${ECC}" "${POL}" "${VAREA}" "${WORKDIR}" "${CONFIG}"; do
+    add_bind_for "${BIND_TARGET}"
+  done
+fi
+
 echo "Running command:"
 printf '  %q' "${CMD[@]}"
 echo
@@ -113,6 +202,6 @@ run_in_env "${CMD[@]}"
 # Generate product.json for brainlife
 # ---------------------------------------------------------------------------
 echo "Generating product.json ..."
-bash "./generate_product_json.sh" --compress "./figures" "./product.json"
+NO_CONTAINER="${NO_CONTAINER:-0}" bash "${SCRIPT_DIR}/generate_product_json.sh" --compress "./figures" "./product.json"
 
 echo "Done. Outputs in ./output"
