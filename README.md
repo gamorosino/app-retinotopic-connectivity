@@ -74,14 +74,7 @@ input/
 
 # Requirements
 
-* MRtrix3
 * Singularity or Apptainer
-* Docker image:
-
-```
-docker://gamorosino/tract_align:latest
-```
-
 ---
 
 # Running the app
