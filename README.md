@@ -11,6 +11,7 @@ The connectivity is derived from  **eccentricity**, **polar angle**, and **visua
 # Author
 
 **Gabriele Amorosino** ([gabriele.amorosino@utexas.edu](mailto:gabriele.amorosino@utexas.edu))
+
 ---
 
 # Citation
