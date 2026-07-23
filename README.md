@@ -11,6 +11,7 @@ The connectivity is derived from  **eccentricity**, **polar angle**, and **visua
 # Author
 
 **Gabriele Amorosino** ([gabriele.amorosino@utexas.edu](mailto:gabriele.amorosino@utexas.edu))
+
 ---
 
 # Citation
@@ -31,8 +32,8 @@ Tournier, J. D., Smith, R., Raffelt, D., Tabbara, R., Dhollander, T., Pietsch, M
 **Brainlife.io**
 
 Hayashi, S., et al. (2024). Brainlife.io: a decentralized platform for reproducible neuroscience. Nature Methods.
-
 [https://doi.org/10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
+
 ---
 
 # Overview
