@@ -11,7 +11,28 @@ The connectivity is derived from  **eccentricity**, **polar angle**, and **visua
 # Author
 
 **Gabriele Amorosino** ([gabriele.amorosino@utexas.edu](mailto:gabriele.amorosino@utexas.edu))
+---
 
+# Citation
+
+If you use this app in your research, please cite:
+
+## Primary work
+
+Amorosino, G., Caron, B., Kwon, J., Carrasco, M., Reid, R. C., Lenglet, C., ... & Pestilli, F. (2026). A retinotopic wiring principle of the human brain. bioRxiv, 2026-04.
+
+## Software dependencies
+
+**MRtrix3**
+
+Tournier, J. D., Smith, R., Raffelt, D., Tabbara, R., Dhollander, T., Pietsch, M., ... & Connelly, A. (2019). MRtrix3: A fast, flexible and open software framework for medical image processing and visualisation. Neuroimage, 202, 116137.
+[https://doi.org/10.1016/j.neuroimage.2019.116137](https://doi.org/10.1016/j.neuroimage.2019.116137)
+
+**Brainlife.io**
+
+Hayashi, S., et al. (2024). Brainlife.io: a decentralized platform for reproducible neuroscience. Nature Methods.
+
+[https://doi.org/10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
 ---
 
 # Overview
@@ -479,25 +500,4 @@ singularity exec -e \
 * No atlas or template registration is required.
 * Tractogram and pRF maps must share the **same voxel space**.
 
----
 
-# Citation
-
-If you use this app in your research, please cite:
-
-## Primary work
-
-Amorosino, G., Caron, B., Kwon, J., Carrasco, M., Reid, R. C., Lenglet, C., ... & Pestilli, F. (2026). A retinotopic wiring principle of the human brain. bioRxiv, 2026-04.
-
-## Software dependencies
-
-**MRtrix3**
-
-- Tournier, J. D., Smith, R., Raffelt, D., Tabbara, R., Dhollander, T., Pietsch, M., ... & Connelly, A. (2019). MRtrix3: A fast, flexible and open software framework for medical image processing and visualisation. Neuroimage, 202, 116137.
-[https://doi.org/10.1016/j.neuroimage.2019.116137](https://doi.org/10.1016/j.neuroimage.2019.116137)
-
-## Brainlife.io
-
-Hayashi, S., et al. (2024). Brainlife.io: a decentralized platform for reproducible neuroscience. Nature Methods.
-
-[https://doi.org/10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
