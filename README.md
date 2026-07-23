@@ -485,8 +485,19 @@ singularity exec -e \
 
 If you use this app in your research, please cite:
 
-- Hayashi, S., ... & Pestilli, F. (2024). brainlife. io: A decentralized and open-source cloud platform to support neuroscience research. Nature methods, 21(5), 809-813.
-[https://doi.org/10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
+## Primary work
+
+Amorosino, G., Caron, B., Kwon, J., Carrasco, M., Reid, R. C., Lenglet, C., ... & Pestilli, F. (2026). A retinotopic wiring principle of the human brain. bioRxiv, 2026-04.
+
+## Software dependencies
+
+**MRtrix3**
 
 - Tournier, J. D., Smith, R., Raffelt, D., Tabbara, R., Dhollander, T., Pietsch, M., ... & Connelly, A. (2019). MRtrix3: A fast, flexible and open software framework for medical image processing and visualisation. Neuroimage, 202, 116137.
 [https://doi.org/10.1016/j.neuroimage.2019.116137](https://doi.org/10.1016/j.neuroimage.2019.116137)
+
+## Brainlife.io
+
+Hayashi, S., et al. (2024). Brainlife.io: a decentralized platform for reproducible neuroscience. Nature Methods.
+
+[https://doi.org/10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
