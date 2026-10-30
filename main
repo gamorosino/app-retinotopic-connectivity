@@ -202,12 +202,12 @@ run_in_env "${CMD[@]}"
 # Generate product.json for brainlife
 # ---------------------------------------------------------------------------
 echo "Generating product.json ..."
-# Run with --compress; if that fails (e.g. ImageMagick unavailable and nested
-# Singularity is disallowed on this resource) fall back to uncompressed so the
-# job still succeeds and outputs are archived.
-if ! NO_CONTAINER="${NO_CONTAINER:-0}" bash "${SCRIPT_DIR}/generate_product_json.sh" --compress "./figures" "./product.json"; then
+# Run inside the same container environment so Python+Pillow is available for
+# image compression, avoiding nested Singularity calls that fail on HPC nodes.
+# Falls back: compressed → uncompressed → minimal error JSON.
+if ! run_in_env bash "${SCRIPT_DIR}/generate_product_json.sh" --compress "./figures" "./product.json"; then
     echo "Warning: compressed product.json failed; retrying without --compress ..." >&2
-    NO_CONTAINER="${NO_CONTAINER:-0}" bash "${SCRIPT_DIR}/generate_product_json.sh" "./figures" "./product.json" || \
+    run_in_env bash "${SCRIPT_DIR}/generate_product_json.sh" "./figures" "./product.json" || \
         echo '{"datatype_tags":[],"brainlife":[{"type":"error","msg":"product.json generation failed"}],"metrics":null}' > "./product.json"
 fi
 

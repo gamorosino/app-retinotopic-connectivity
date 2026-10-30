@@ -118,19 +118,14 @@ if [[ "${NO_CONTAINER:-0}" != "1" ]]; then
     done
 fi
 
-# Singularity/Apptainer's own startup fails if the *invoking shell's* cwd
-# is on a FUSE mount (e.g. sshfs) -- run from a safe local cwd (cd / in a
-# subshell) regardless of where we actually are. Set NO_CONTAINER=1 to skip
-# containers entirely and use a locally-installed `convert`/`magick` instead.
-#
-# Resolution order for ImageMagick:
+# Resolution order for image conversion / resizing:
 #   1. local `magick`   (ImageMagick 7)
 #   2. local `convert`  (ImageMagick 6)
-#   3. apptainer (if available and NO_CONTAINER != 1)
-#   4. singularity (if available and NO_CONTAINER != 1)
-# Trying local tools first avoids pulling a Docker image inside a job that
-# may already be running inside a Singularity container (nested containers
-# are often disallowed on HPC resources and cause the job to crash silently).
+#   3. Python + Pillow  (available inside the tract_align conda env)
+#   4. apptainer / singularity  (only when NO_CONTAINER != 1; last resort
+#      because nested container calls are often disallowed on HPC resources)
+# Trying local tools and Python first avoids pulling a Docker image inside a
+# job that may already be running inside a Singularity container.
 img_to_png() {
     local input="$1"
     local output="$2"
@@ -145,12 +140,23 @@ img_to_png() {
         magick "$input" "${resize_args[@]}" PNG:"$output"
     elif command -v convert >/dev/null 2>&1; then
         convert "$input" "${resize_args[@]}" PNG:"$output"
+    elif command -v python3 >/dev/null 2>&1 && python3 -c "from PIL import Image" 2>/dev/null; then
+        python3 - "$input" "$output" "$percent" <<'PYEOF'
+import sys
+from PIL import Image
+src, dst, pct = sys.argv[1], sys.argv[2], int(sys.argv[3])
+img = Image.open(src).convert("RGBA")
+if pct < 100:
+    w, h = img.size
+    img = img.resize((max(1, int(w * pct / 100)), max(1, int(h * pct / 100))), Image.LANCZOS)
+img.save(dst, "PNG")
+PYEOF
     elif [[ "${NO_CONTAINER:-0}" != "1" ]] && command -v apptainer >/dev/null 2>&1; then
         ( cd / && apptainer exec "${CONTAINER_BINDS[@]}" "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output" )
     elif [[ "${NO_CONTAINER:-0}" != "1" ]] && command -v singularity >/dev/null 2>&1; then
         ( cd / && singularity exec "${CONTAINER_BINDS[@]}" "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output" )
     else
-        echo "Error: --compress requires ImageMagick ('magick' or 'convert') or apptainer/singularity." >&2
+        echo "Error: --compress requires ImageMagick, Python+Pillow, or apptainer/singularity." >&2
         exit 1
     fi
 }
