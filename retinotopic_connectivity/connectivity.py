@@ -130,14 +130,24 @@ def parse_parc_label_selection(spec, available: List[int], label_map: Optional[d
 
         for v in values:
             if v not in available_set:
-                raise ValueError(
-                    f"Label {v} is not present in the parcellation image."
+                # Label exists in label.json but has no voxels in this subject's
+                # parcellation (e.g. a small region that was excluded or is absent).
+                # Warn and skip rather than crash — downstream rows/columns for
+                # genuinely missing regions would be all-zero anyway.
+                print(
+                    f"[WARNING] parc_labels: label {v!r} (from token '{tok}') "
+                    f"has no voxels in the parcellation image — skipping."
                 )
+                continue
             if v not in selected:
                 selected.append(v)
 
     if not selected:
-        raise ValueError(f"parc_labels='{spec}' did not match any label in the parcellation.")
+        raise ValueError(
+            f"parc_labels='{spec}' did not match any label present in the "
+            f"parcellation image. Available values: {sorted(available_set)[:20]}"
+            f"{'...' if len(available_set) > 20 else ''}."
+        )
     return selected
 
 
