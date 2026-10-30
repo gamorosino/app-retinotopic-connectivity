@@ -122,6 +122,15 @@ fi
 # is on a FUSE mount (e.g. sshfs) -- run from a safe local cwd (cd / in a
 # subshell) regardless of where we actually are. Set NO_CONTAINER=1 to skip
 # containers entirely and use a locally-installed `convert`/`magick` instead.
+#
+# Resolution order for ImageMagick:
+#   1. local `magick`   (ImageMagick 7)
+#   2. local `convert`  (ImageMagick 6)
+#   3. apptainer (if available and NO_CONTAINER != 1)
+#   4. singularity (if available and NO_CONTAINER != 1)
+# Trying local tools first avoids pulling a Docker image inside a job that
+# may already be running inside a Singularity container (nested containers
+# are often disallowed on HPC resources and cause the job to crash silently).
 img_to_png() {
     local input="$1"
     local output="$2"
@@ -132,21 +141,16 @@ img_to_png() {
         resize_args=(-resize "${percent}%")
     fi
 
-    if [[ "${NO_CONTAINER:-0}" == "1" ]]; then
-        if command -v magick >/dev/null 2>&1; then
-            magick "$input" "${resize_args[@]}" PNG:"$output"
-        elif command -v convert >/dev/null 2>&1; then
-            convert "$input" "${resize_args[@]}" PNG:"$output"
-        else
-            echo "Error: --compress with NO_CONTAINER=1 requires a local 'convert' or 'magick' (ImageMagick)." >&2
-            exit 1
-        fi
-    elif command -v apptainer >/dev/null 2>&1; then
+    if command -v magick >/dev/null 2>&1; then
+        magick "$input" "${resize_args[@]}" PNG:"$output"
+    elif command -v convert >/dev/null 2>&1; then
+        convert "$input" "${resize_args[@]}" PNG:"$output"
+    elif [[ "${NO_CONTAINER:-0}" != "1" ]] && command -v apptainer >/dev/null 2>&1; then
         ( cd / && apptainer exec "${CONTAINER_BINDS[@]}" "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output" )
-    elif command -v singularity >/dev/null 2>&1; then
+    elif [[ "${NO_CONTAINER:-0}" != "1" ]] && command -v singularity >/dev/null 2>&1; then
         ( cd / && singularity exec "${CONTAINER_BINDS[@]}" "$IMG_CONTAINER" convert "$input" "${resize_args[@]}" PNG:"$output" )
     else
-        echo "Error: --compress requires apptainer or singularity." >&2
+        echo "Error: --compress requires ImageMagick ('magick' or 'convert') or apptainer/singularity." >&2
         exit 1
     fi
 }
