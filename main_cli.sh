@@ -38,6 +38,7 @@ By default, ./main is then executed with the generated config.
 Common keys (see README.md for the full list):
   --track                     tractogram (.tck) [required]
   --parc                      parcellation image (enables parcellation mode)
+  --parc_labels                 subset of parc labels, e.g. "1,5,10-20" (default: all)
   --eccentricity               eccentricity map (.nii.gz)
   --polarAngle                 polar angle map (.nii.gz)
   --varea                      visual area map (.nii.gz)

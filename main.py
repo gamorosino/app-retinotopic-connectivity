@@ -182,7 +182,10 @@ def main():
         
         label_json = _get(cfg, "label", args.label)
         label_json = Path(label_json) if label_json else None
-        
+
+        # optional subset of atlas labels, e.g. "1,5,10-20" or "V1,V2"
+        parc_labels = _get(cfg, "parc_labels", None)
+
         run_single_subject_matrix(
             tract_tck=Path(args.tck),
             ecc_map=None,
@@ -208,6 +211,7 @@ def main():
             areas_global=False,
             label_json=label_json,
             work_dir=work_dir,
+            parc_labels=parc_labels,
         )
         return
 

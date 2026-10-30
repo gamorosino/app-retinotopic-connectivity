@@ -303,6 +303,14 @@ Results from these methods **are not identical**.
 
 ---
 
+## Parcellation labels (parcellation mode only)
+
+| Parameter   | Description                                                                                                                                                                                      |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| parc_labels | restrict the matrix to a subset of atlas labels: comma-separated voxel values, inclusive ranges and/or names from `label.json` (e.g. `"1,5,10-20"` or `"V1,V2,hV4"`). Default `all`. Labels are kept in the given order; the exported `label.json` keeps the original `voxel_value`s. |
+
+---
+
 ## ROI binning
 
 | Parameter  | Description                       |

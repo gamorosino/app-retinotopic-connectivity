@@ -87,6 +87,99 @@ def make_parc_label_json(parc_map: Path):
     return labels
 
 
+def parse_parc_label_selection(spec, available: List[int], label_map: Optional[dict] = None):
+    """
+    Parse a selection of parcellation labels.
+
+    `spec` can be a list or a comma-separated string mixing voxel values
+    ("5"), inclusive ranges ("10-20") and names from label.json ("V1").
+    Returns the selected voxel values in the given order (duplicates removed),
+    or None when nothing / "all" is requested.
+    """
+    if spec is None:
+        return None
+    if isinstance(spec, (list, tuple)):
+        tokens = [str(t).strip() for t in spec]
+    else:
+        tokens = [t.strip() for t in str(spec).split(",")]
+    tokens = [t for t in tokens if t]
+    if not tokens or (len(tokens) == 1 and tokens[0].lower() == "all"):
+        return None
+
+    name_to_value = {}
+    if label_map:
+        name_to_value = {str(name).lower(): v for v, name in label_map.items()}
+
+    available_set = set(available)
+    selected = []
+    for tok in tokens:
+        if tok.lower() in name_to_value:
+            values = [name_to_value[tok.lower()]]
+        elif tok.lstrip("-").isdigit():
+            values = [int(tok)]
+        elif "-" in tok and all(p.strip().isdigit() for p in tok.split("-", 1)):
+            lo, hi = (int(p) for p in tok.split("-", 1))
+            if lo > hi:
+                raise ValueError(f"Invalid label range '{tok}' (start > end).")
+            values = [v for v in range(lo, hi + 1) if v in available_set]
+        else:
+            raise ValueError(
+                f"Unknown parcellation label '{tok}'. Use voxel values, ranges "
+                f"(e.g. 10-20) or names from label.json."
+            )
+
+        for v in values:
+            if v not in available_set:
+                raise ValueError(
+                    f"Label {v} is not present in the parcellation image."
+                )
+            if v not in selected:
+                selected.append(v)
+
+    if not selected:
+        raise ValueError(f"parc_labels='{spec}' did not match any label in the parcellation.")
+    return selected
+
+
+def make_parc_subset_image(parc_map: Path, values: List[int], out_path: Path) -> Path:
+    """
+    Keep only `values` in the parcellation and renumber them 1..K
+    (in the given order), so the matrix is K x K.
+    """
+    img = nib.load(str(parc_map))
+    data = np.squeeze(img.get_fdata())
+
+    out = np.zeros(data.shape, dtype=np.int32)
+    for new_idx, value in enumerate(values, start=1):
+        out[data == value] = new_idx
+
+    out_img = nib.Nifti1Image(out, img.affine, img.header)
+    out_img.set_data_dtype(np.int32)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    nib.save(out_img, str(out_path))
+    return out_path
+
+
+def make_parc_subset_label_json(values: List[int], label_entries: Optional[list] = None):
+    """label.json for a label subset, in matrix order, keeping original voxel values."""
+    by_value = {}
+    for item in label_entries or []:
+        if "voxel_value" in item:
+            by_value[int(item["voxel_value"])] = item
+
+    labels = [{"name": "self-loop", "desc": "index(x,x) is the diagonal"}]
+    for value in values:
+        if value in by_value:
+            labels.append(dict(by_value[value]))
+        else:
+            labels.append({
+                "name": f"parcel_{value}",
+                "label": str(value),
+                "voxel_value": value,
+            })
+    return labels
+
+
 def extract_parcel_mask(parc_map: Path, parcel_value: int, out_path: Path) -> Path:
     if out_path.exists():
         return out_path
@@ -114,15 +207,17 @@ def run_parcellation_pairwise(
     zero_diagonal: bool = True,
     symmetric: bool = True,
     n_jobs: int = 1,
+    label_json: Optional[Path] = None,
+    selected_labels: Optional[List[int]] = None,
 ):
     n_jobs = max(1, int(n_jobs))
     outdir.mkdir(parents=True, exist_ok=True)
 
-    labels = get_parc_labels(parc_map)
-    n_labels = int(max(labels))
+    labels = selected_labels if selected_labels else get_parc_labels(parc_map)
+    n_labels = len(labels)
 
     _, label_map = read_label_json(label_json)
-    
+
     if label_map is not None:
         plot_labels = [label_map.get(v, str(v)) for v in labels]
     else:
@@ -182,7 +277,7 @@ def run_parcellation_pairwise(
         M,
         "Parcellation structural connectivity",
         outdir / "matrix",
-        [str(v) for v in labels],
+        plot_labels,
         cmap=cmap,
         vmin=vmin,
         vmax=vmax,
@@ -938,20 +1033,30 @@ def run_parcellation_connectome(
     vmax: Optional[float],
     n_jobs: int = 1,
     label_json: Optional[Path] = None,
+    selected_labels: Optional[List[int]] = None,
 ):
     n_jobs = max(1, int(n_jobs))
-
-    labels = get_parc_labels(parc_map)
-    n_labels = int(max(labels))
+    outdir.mkdir(parents=True, exist_ok=True)
 
     _, label_map = read_label_json(label_json)
 
-    if label_map is not None:
-        plot_labels = [label_map.get(v, str(v)) for v in range(1, n_labels + 1)]
+    if selected_labels:
+        # renumber the selected labels 1..K so tck2connectome builds a K x K matrix
+        plot_values = list(selected_labels)
+        parc_map = make_parc_subset_image(
+            parc_map, plot_values, outdir / "parc_selected_labels.nii.gz"
+        )
+        labels = list(range(1, len(plot_values) + 1))
     else:
-        plot_labels = [str(v) for v in range(1, n_labels + 1)]
+        labels = get_parc_labels(parc_map)
+        plot_values = list(range(1, int(max(labels)) + 1))
+    n_labels = len(plot_values)
 
-    outdir.mkdir(parents=True, exist_ok=True)
+    if label_map is not None:
+        plot_labels = [label_map.get(v, str(v)) for v in plot_values]
+    else:
+        plot_labels = [str(v) for v in plot_values]
+
     out_csv = outdir / "matrix.csv"
 
     print(f"[DEBUG] parc_map: {parc_map}")
@@ -1778,6 +1883,7 @@ def run_single_subject_matrix(
     matrix_elements: str = "eccentricity",
     label_json: Optional[Path] = None,
     work_dir: Optional[Path] = None,
+    parc_labels=None,
     ):
     mode = str(mode).strip().lower()
 
@@ -1804,6 +1910,13 @@ def run_single_subject_matrix(
     work_outdir = layout["work_dir"]
 
     if mode == "parcellation":
+        _, label_map = read_label_json(label_json)
+        selected_labels = parse_parc_label_selection(
+            parc_labels, get_parc_labels(varea_map), label_map
+        )
+        if selected_labels:
+            print(f"[INFO] Restricting parcellation to labels: {selected_labels}")
+
         if area_matrix_method == "connectome":
             M = run_parcellation_connectome(
             tract_tck=tract_tck,
@@ -1815,6 +1928,7 @@ def run_single_subject_matrix(
             vmax=vmax,
             n_jobs=n_jobs,
             label_json=label_json,
+            selected_labels=selected_labels,
         )
     
         elif area_matrix_method == "pairwise":
@@ -1829,6 +1943,8 @@ def run_single_subject_matrix(
                 vmin=vmin,
                 vmax=vmax,
                 n_jobs=n_jobs,
+                label_json=label_json,
+                selected_labels=selected_labels,
             )
     
         else:
@@ -1839,7 +1955,9 @@ def run_single_subject_matrix(
     
         label_entries, _ = read_label_json(label_json)
 
-        if label_entries is None:
+        if selected_labels:
+            label_entries = make_parc_subset_label_json(selected_labels, label_entries)
+        elif label_entries is None:
             label_entries = make_parc_label_json(varea_map)
         
         export_artifacts_and_write_manifests(
