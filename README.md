@@ -1,5 +1,53 @@
 # Retinotopic Connectivity Matrix
 
+<!-- brainlife-app:begin (generated from the App manifest; edit the manifest, not this block) -->
+
+> **Computes a structural connectivity matrix between the regions of a volumetric parcellation from an MRtrix tractogram, using MRtrix3 tck2connectome or pairwise tckedit filtering.**
+
+Parcellation mode of app-retinotopic-connectivity: assigns streamlines of the tractogram to the labels of the input parcellation and counts connections normalized by ROI volume, either with tck2connectome (endpoint assignment, fast) or pairwise tckedit filtering (stricter). Use it to get a region-by-region structural connectome, optionally restricted to a subset of labels. The tractogram and parcellation must be in the same space; the README mainly documents the retinotopic (pRF) mode of the same code.
+
+| | |
+|---|---|
+| 📥 **Inputs** | `neuro/track/tck` · `neuro/parcellation/volume` |
+| 📤 **Outputs** | `generic/images` · `neuro/conmat` |
+| 🐳 **Container** | `gamorosino/tract_align:v1.1` |
+| 🔗 **Run it** | [doi.org/10.25663/brainlife.app.931](https://doi.org/10.25663/brainlife.app.931) |
+
+#### 📥 Inputs
+
+| Input | Datatype | Required | Description |
+|---|---|---|---|
+| `track` | `neuro/track/tck` | yes | Whole-brain MRtrix .tck tractogram. Must be in the same space as the parcellation. |
+| `parc` | `neuro/parcellation/volume` | yes | Volumetric parcellation with its label.json (names of voxel values), used as the connectome nodes. Must be in the same space as the tractogram. |
+
+#### 📤 Outputs
+
+| Output | Datatype | Description |
+|---|---|---|
+| `figures` | `generic/images` | PNG figures of the connectivity matrix, listed in images.json. |
+| `matrices` | `neuro/conmat` | Connectivity matrix as CSV (streamline density) with index.json and label.json. |
+
+<details>
+<summary><b>⚙️ Parameters</b> (6)</summary>
+
+| Parameter | Type | Default | Description |
+|---|---|---|---|
+| `color_map` | string |  | Controls matrix visualization. Single value (e.g., "viridis", "hot", "red"): used for single-matrix modes; Multiple values (e.g., "red,blue,green"): one color per eccentricity bin (only in area_by_area mode) |
+| `area_matrix_method` | enum | `connectome` | connectome: Fast method using MRtrix tck2connectome (endpoint voxel assignment). pairwise: Slower but stricter method using explicit streamline filtering (tckedit). Options: `pairwise`, `connectome`. |
+| `roi_order` | boolean | `true` | true → enforce ordered endpoint matching (A→B and B→A computed separately, then merged; used when <area_matrix_method> = pairwise) |
+| `ends_only` | boolean | `true` | true → only test streamline endpoints against ROIs (stricter); false → test the full streamline trajectory against ROIs; (used when <area_matrix_method> = pairwise) |
+| `n_jobs` | number | `1` | Parallel processing: -1 → use all available CPU cores; 1 → run serially; >1 → use specified number of workers; |
+| `parc_labels` | string |  | Restrict the parcellation matrix to a subset of atlas labels. Accepts a comma-separated list of voxel values, inclusive ranges, or names from label.json (case-insensitive). Examples: "1,5,10-20" → labels 1, 5, and 10 through 20 "V1,V2,hV4" → named labels from label.json Leave empty (default) to include all labels. |
+
+</details>
+
+📚 **References used by this App:**
+- Amorosino G, Caron B, Kwon J, Carrasco M, Reid RC, Lenglet C, ... Pestilli F. A retinotopic wiring principle of the human brain. bioRxiv (2026).
+- Tournier JD et al. MRtrix3: A fast, flexible and open software framework for medical image processing and visualisation. NeuroImage (2019). [doi:10.1016/j.neuroimage.2019.116137](https://doi.org/10.1016/j.neuroimage.2019.116137)
+- Hayashi S et al. brainlife.io: a decentralized platform for reproducible neuroscience. Nature Methods (2024). [doi:10.1038/s41592-024-02237-2](https://doi.org/10.1038/s41592-024-02237-2)
+
+<!-- brainlife-app:end -->
+
 `app-retinotopic-connectivity`
 
 This app computes **retinotopic structural connectivity matrices** from a tractogram and population receptive field (pRF) maps.
